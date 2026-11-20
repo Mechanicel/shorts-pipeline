@@ -136,5 +136,5 @@ def test_upload_meldung_enthaelt_studio_link() -> None:
     topic = db.get(_approved_topic(db, 9))
     line = format_upload_line(topic, "Mein Titel", "abc123XYZ", "2026-11-23T16:00:00Z")
     assert "https://studio.youtube.com/video/abc123XYZ/edit" in line
-    assert "privat" in line
+    assert "geplant" in line
     assert "Mo 23.11. 17:00" in line  # 16:00 UTC = 17:00 MEZ, deutscher Wochentag

@@ -86,11 +86,11 @@ WOCHENTAGE = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
 
 
 def format_upload_line(topic: Topic, title: str, video_id: str, slot: str) -> str:
-    """Telegram-Zeile nach dem Upload. Solange das API-Projekt nicht auditiert ist, bleiben Uploads
-    privat → Studio-Link zum manuellen Veröffentlichen."""
+    """Telegram-Zeile nach dem Upload: Termin, an dem YouTube das Video automatisch veröffentlicht,
+    plus Studio-Link als Rückfallebene (ohne API-Audit nicht garantiert)."""
     local = datetime.fromisoformat(slot.replace("Z", "+00:00")).astimezone(BERLIN)
     return (f"#{topic.id} {title}\n"
-            f"🔒 privat hochgeladen · geplanter Termin {WOCHENTAGE[local.weekday()]} {local:%d.%m. %H:%M}\n"
+            f"📅 geplant: {WOCHENTAGE[local.weekday()]} {local:%d.%m. %H:%M} (geht automatisch live)\n"
             f"Studio: {STUDIO_URL.format(id=video_id)}")
 
 
@@ -179,8 +179,8 @@ def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry
         msg = f"📤 Upload [{channel.key}]: {len(done)} hochgeladen"
         if done:
             msg += "\n\n" + "\n\n".join(done)
-            msg += ("\n\nℹ️ API-Projekt noch nicht auditiert: Videos bleiben privat. "
-                    "Über den Studio-Link prüfen und von Hand veröffentlichen.")
+            msg += ("\n\nℹ️ API-Projekt noch nicht auditiert: Falls ein Video zum Termin nicht live geht, "
+                    "über den Studio-Link auf „Öffentlich“ stellen.")
         if errors:
             msg += "\n⚠️ " + "\n⚠️ ".join(errors)
         rest = len(pending) - len(done)

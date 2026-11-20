@@ -107,7 +107,9 @@ docker compose up -d bot
   (`https://studio.youtube.com/video/<id>/edit`). Bestätigt (Google-Hilfe 7300965): gesperrt, kein Einspruch,
   nur Neu-Upload → `UPLOAD_MODE=manual` ist Standard; `api` erst nach Audit.
 - [x] `auth-check` ok; privater Test-Upload über die API erfolgreich (Betreiber löscht ihn).
-- [ ] Betreiber: `sudo bash deploy/install_timers.sh` (sudo braucht Passwort).
+- [x] Timer installiert (Upload täglich 09:30, Pipeline So 06:00).
+- [x] Sichtbarkeitstest: API-Upload, in Studio auf öffentlich gestellt → von außen abspielbar (oEmbed 200, Status OK).
+  Daher `UPLOAD_MODE=api` ab erstem echten Video; prüfen, ob `publishAt` ohne Audit automatisch live geht.
 - Lehre: Ein abgebrochener `docker compose run` läuft im Hintergrund weiter → parallele Läufe sind jetzt per
   `flock` auf `data/job.lock` gesperrt (pipeline + upload).
 - [ ] YouTube-API-Audit beantragen (sonst bleiben Uploads privat)
