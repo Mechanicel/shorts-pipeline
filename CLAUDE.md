@@ -65,7 +65,9 @@ docker compose up -d bot
 - Kernzahlen + Datum stehen als **eigene Grafik groß im Vordergrund**; Stock-Material ist nur Hintergrund.
 - Claude liefert `key_facts` (1–3, Ziffern wie in der Quelle) + `date_label`; `unverified_numbers()` prüft jede
   Grafik-Zahl gegen den Quelltext → Warnung im Telegram-Review.
-- Stimme: `TTS_SPEED` (Standard 1.15, ffmpeg atempo vor Whisper), Skript 70–95 Wörter → ca. 32–43 s.
+- Stimme: `TTS_SPEED` (Standard 1.15, ffmpeg **atempo** vor Whisper – im Hörvergleich vom Betreiber gegenüber
+  rubberband und Originaltempo bevorzugt), OpenAI liefert WAV (verlustfrei). Skript 70–95 Wörter → ca. 32–43 s.
+- Testmodus (`--dry-run`, Demo-Pakete) nutzt espeak → klingt absichtlich roboterhaft; beim Versenden immer dazuschreiben.
 - **Kein fremdes Gameplay** (urheberrechtlich geschützt). Erlaubt: eigene Aufnahmen, Pixabay, eigene Animation.
 
 ## Pixabay-Regeln (verbindlich)

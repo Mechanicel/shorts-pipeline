@@ -33,8 +33,8 @@ class OpenAITTS:
         self._instructions = channel.tts_instructions
 
     def synthesize(self, text: str, out_dir: Path) -> Path:
-        out = out_dir / "voice.mp3"
-        kwargs: dict = dict(model=self._model, voice=self._voice, input=text, response_format="mp3")
+        out = out_dir / "voice.wav"  # verlustfrei; einzige Lossy-Stufe ist AAC im fertigen Video
+        kwargs: dict = dict(model=self._model, voice=self._voice, input=text, response_format="wav")
         if self._instructions and not self._model.startswith("tts-1"):
             kwargs["instructions"] = self._instructions
         with self._client.audio.speech.with_streaming_response.create(**kwargs) as resp:
