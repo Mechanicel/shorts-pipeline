@@ -131,3 +131,31 @@ def test_zahlenpruefung_der_grafik() -> None:
     assert unverified_numbers(s, sample_data.SAMPLE_SOURCE_TEXT) == []
     bad = s.model_copy(update={"date_label": "AB 1. APRIL 2028"})
     assert unverified_numbers(bad, sample_data.SAMPLE_SOURCE_TEXT) == ["AB 1. APRIL 2028"]
+
+
+def test_pool_waechst_abwechslungsreich_und_gedrosselt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def hits_for(q: str) -> list[dict]:
+        return [{**HIT, "id": f"{q}{i}", "tags": f"{q}, x", "pageURL": f"https://p/{q}{i}"} for i in range(5)]
+
+    monkeypatch.setattr(backgrounds, "pixabay_search", lambda key, q, d: hits_for(q))
+    monkeypatch.setattr(backgrounds, "MIN_REQUEST_INTERVAL", 0)
+
+    class Stream:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def raise_for_status(self) -> None: ...
+        def iter_bytes(self): yield b"video"
+
+    monkeypatch.setattr(backgrounds.httpx, "stream", lambda *a, **k: Stream())
+    pool = backgrounds.fill_pixabay_pool("k", ["fireworks", "ink", "abstract", "hyperlapse"], tmp_path)
+    assert len(pool) == 3                                   # max. 3 neue Clips pro Lauf
+    assert {p.name.split("_")[1][:-5] for p in pool} == {"fireworks", "ink", "abstract"}  # je Begriff einer
+    pool = backgrounds.fill_pixabay_pool("k", ["fireworks", "ink", "abstract", "hyperlapse"], tmp_path)
+    assert any("hyperlapse" in p.name for p in pool)        # nächster Lauf startet beim nächsten Begriff
+
+
+def test_tagfilter_verwirft_lockere_treffer() -> None:
+    from shorts.backgrounds import matches_query
+    assert not matches_query({"tags": "ocean, waves, rocks, sand, coast"}, "kinetic sand")  # Strand
+    assert matches_query({"tags": "kinetic sand, sand, cutting, asmr"}, "kinetic sand")
+    assert matches_query({"tags": "light traces, traffic, highway, time lapse, timelapse"}, "traffic timelapse")

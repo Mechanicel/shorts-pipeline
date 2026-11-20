@@ -30,14 +30,17 @@ channels:
     # Pixabay-Suchbegriffe für bewegte Hintergründe (nur aktiv, wenn PIXABAY_API_KEY gesetzt ist).
     # Querformat wird automatisch auf 9:16 zugeschnitten. Eigene Clips in assets/backgrounds/
     # haben Vorrang; ohne beides: generierte Ball-Animation.
+    # Getestet 2026-11-20: liefern viel Bewegung und passen zu den Tags (Filter: jedes Wort muss in den Tags stehen).
+    # Schlecht waren: kinetic sand/satisfying (Strände, Tempel), slime (Schnecken), dominoes/paint mixing (0 Treffer).
     background_queries:
-      - kinetic sand
-      - marble run
-      - satisfying
-      - city night timelapse
-      - drone flight
-      - abstract particles
-      - neon tunnel
+      - fireworks
+      - traffic timelapse
+      - hyperlapse
+      - ink
+      - particles
+      - abstract
+      - roller coaster
+      - drone city
     sources:
       - name: Bundesregierung – Artikel
         type: rss

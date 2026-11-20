@@ -73,6 +73,8 @@ docker compose up -d bot
 - Pixabay hat kein `orientation` → Querformat wird beim Rendern auf 9:16 zugeschnitten (Variante ≥ 1080 px Höhe).
 - Quellenangabe in der YouTube-Beschreibung: `Video: Pixabay <pageURL>` (Spalte `background_credit`).
 - API-Key steht in der Request-URL → Exception-Messages von httpx nie loggen (nur den Typ).
+- Pixabay sucht sehr locker ('kinetic sand' → Strände) → `matches_query()`: jedes Suchwort muss in den Tags stehen.
+  Suchbegriffe in `channels.yaml` sind getestet; pro Lauf je Begriff max. 1 neuer Clip, Startbegriff rotiert.
 - Pexels wurde verworfen (keine neuen Keys).
 
 ## Wichtige Fakten / Stolpersteine
@@ -95,7 +97,7 @@ docker compose up -d bot
   besser wäre Sequenz-Alignment (difflib) zwischen Skript- und Whisper-Wörtern.
 - [ ] Betreiber: `sudo bash deploy/install_timers.sh`; `token_de.json` per scp
 - [x] Hintergründe (generierte Animation, Pixabay-Anbindung) + Faktenkarten + Stimme +15 %; 37 Tests grün.
-  Pixabay **ungetestet gegen die echte API**: `PIXABAY_API_KEY` fehlt noch in `.env`.
+  Pixabay live getestet: Antwortformat passt, Cache/Drossel/Download-Limit greifen, Quellenangabe wird erfasst.
 - Lehre: Ein abgebrochener `docker compose run` läuft im Hintergrund weiter → parallele Läufe sind jetzt per
   `flock` auf `data/job.lock` gesperrt (pipeline + upload).
 - [ ] YouTube-API-Audit beantragen (sonst bleiben Uploads privat)

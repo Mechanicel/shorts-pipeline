@@ -83,17 +83,25 @@ def choose_pixabay_rendition(hit: dict, min_height: int = 1080) -> dict | None:
     return min(variants, key=lambda v: v["height"]) if variants else None
 
 
+def matches_query(hit: dict, query: str) -> bool:
+    """Pixabay sucht sehr locker ('kinetic sand' liefert Strände) → jedes Suchwort muss in den Tags stehen."""
+    tags = {t.strip() for tag in hit.get("tags", "").lower().split(",") for t in tag.split()}
+    return all(word in tags for word in query.lower().split())
+
+
 def credit_for(meta: dict) -> str:
     return f"Video: Pixabay {meta['pageURL']}"
 
 
 def fill_pixabay_pool(api_key: str, queries: list[str], cache_dir: Path,
-                      target: int = POOL_TARGET, min_duration: int = 12) -> list[Path]:
+                      target: int = POOL_TARGET, min_duration: int = 10) -> list[Path]:
     """Hält einen kleinen lokalen Clip-Pool vor; lädt pro Lauf höchstens MAX_NEW_DOWNLOADS_PER_RUN."""
     cache_dir.mkdir(parents=True, exist_ok=True)
     have = sorted(cache_dir.glob("pixabay_*.mp4"))
     downloads = 0
-    for query in queries:
+    # Abwechslung: Startbegriff rotiert mit der Poolgröße, pro Begriff höchstens ein neuer Clip je Lauf
+    start = len(have) % len(queries) if queries else 0
+    for query in queries[start:] + queries[:start]:
         if len(have) >= target or downloads >= MAX_NEW_DOWNLOADS_PER_RUN:
             break
         try:
@@ -105,7 +113,7 @@ def fill_pixabay_pool(api_key: str, queries: list[str], cache_dir: Path,
             if len(have) >= target or downloads >= MAX_NEW_DOWNLOADS_PER_RUN:
                 break
             out = cache_dir / f"pixabay_{hit['id']}.mp4"
-            if out.exists() or hit.get("duration", 0) < min_duration:
+            if out.exists() or hit.get("duration", 0) < min_duration or not matches_query(hit, query):
                 continue
             rendition = choose_pixabay_rendition(hit)
             if not rendition:
@@ -125,6 +133,7 @@ def fill_pixabay_pool(api_key: str, queries: list[str], cache_dir: Path,
             downloads += 1
             log.info("Pixabay-Clip geladen: %s (%s, %ss, %sx%s)", out.name, query, hit.get("duration"),
                      rendition["width"], rendition["height"])
+            break  # nächster Suchbegriff
     return sorted(have)
 
 
