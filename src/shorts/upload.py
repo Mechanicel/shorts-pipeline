@@ -1,4 +1,4 @@
-"""YouTube-Upload freigegebener Videos: privat + publishAt auf die Wochen-Slots verteilt.
+"""YouTube-Upload freigegebener Videos: privat + publishAt auf die Wochen-Slots verteilt (oder --sofort öffentlich).
 
 Quota: videos.insert kostet ca. 1.600 Einheiten, Tageskontingent 10.000; Reset um Mitternacht
 Pacific Time. Verbrauch wird in SQLite mitgezählt.
@@ -56,7 +56,8 @@ def quota_day(now: datetime) -> str:
 
 
 # ------------------------------------------------------------------ Metadaten
-def build_metadata(topic: Topic, channel: ChannelConfig, publish_at: str) -> dict:
+def build_metadata(topic: Topic, channel: ChannelConfig, publish_at: str | None) -> dict:
+    """publish_at=None → sofort öffentlich; sonst privat mit geplanter Veröffentlichung."""
     s = topic.script or {}
     hashtags = list(dict.fromkeys(s.get("hashtags", []) + channel.default_hashtags))  # ohne Duplikate
     title = s.get("title", topic.title).replace("<", "").replace(">", "")[:100]
@@ -73,8 +74,8 @@ def build_metadata(topic: Topic, channel: ChannelConfig, publish_at: str) -> dic
             "defaultAudioLanguage": channel.language,
         },
         "status": {
-            "privacyStatus": "private",
-            "publishAt": publish_at,
+            "privacyStatus": "private" if publish_at else "public",
+            **({"publishAt": publish_at} if publish_at else {}),
             "selfDeclaredMadeForKids": False,
             "containsSyntheticMedia": channel.contains_synthetic_media,
         },
@@ -85,9 +86,12 @@ STUDIO_URL = "https://studio.youtube.com/video/{id}/edit"
 WOCHENTAGE = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
 
 
-def format_upload_line(topic: Topic, title: str, video_id: str, slot: str) -> str:
-    """Telegram-Zeile nach dem Upload: Termin, an dem YouTube das Video automatisch veröffentlicht,
-    plus Studio-Link als Rückfallebene (ohne API-Audit nicht garantiert)."""
+def format_upload_line(topic: Topic, title: str, video_id: str, slot: str | None) -> str:
+    """Telegram-Zeile nach dem Upload: Termin, an dem YouTube das Video automatisch veröffentlicht
+    (oder 'sofort öffentlich'), plus Studio-Link als Rückfallebene (ohne API-Audit nicht garantiert)."""
+    if slot is None:
+        return (f"#{topic.id} {title}\n🌍 sofort öffentlich hochgeladen\n"
+                f"https://youtu.be/{video_id}\nStudio: {STUDIO_URL.format(id=video_id)}")
     local = datetime.fromisoformat(slot.replace("Z", "+00:00")).astimezone(BERLIN)
     return (f"#{topic.id} {title}\n"
             f"📅 geplant: {WOCHENTAGE[local.weekday()]} {local:%d.%m. %H:%M} (geht automatisch live)\n"
@@ -140,8 +144,9 @@ def parse_publish_at(text: str, now: datetime) -> str:
 
 
 def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry_run: bool = False,
-                now: datetime | None = None, publish_at: str | None = None) -> int:
-    """publish_at (UTC-ISO) gilt nur für das erste Video der Warteschlange (Test eines Wunschtermins)."""
+                now: datetime | None = None, publish_at: str | None = None, immediate: bool = False) -> int:
+    """publish_at (UTC-ISO) gilt nur für das erste Video der Warteschlange (Test eines Wunschtermins).
+    immediate=True: alle Videos dieses Laufs sofort öffentlich, ohne Termin."""
     now = now or datetime.now(timezone.utc)
     pending = sorted(db.by_status(Status.FREIGEGEBEN, channel.key), key=lambda t: (t.updated_at, t.id))
     if not pending:
@@ -162,16 +167,19 @@ def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry
     for topic in pending[:max(budget, 0)]:
         # Bereits zugewiesenen Slot (z. B. nach Retry) behalten, wenn er noch in der Zukunft liegt
         slot = topic.publish_at
-        if publish_at:
+        if immediate:
+            slot = None
+        elif publish_at:
             slot, publish_at = publish_at, None  # Wunschtermin nur für das erste Video
         elif not slot or datetime.fromisoformat(slot.replace("Z", "+00:00")) < now + MIN_LEAD:
             slot = next_free_slot(channel.publish_slots, taken, now)
-        taken.add(slot)
+        if slot:
+            taken.add(slot)
         body = build_metadata(topic, channel, slot)
         if dry_run:
-            print(f"[dry-run] #{topic.id} → {slot}  {body['snippet']['title']}")
+            print(f"[dry-run] #{topic.id} → {slot or 'sofort öffentlich'}  {body['snippet']['title']}")
             continue
-        db.update_fields(topic.id, publish_at=slot)
+        db.update_fields(topic.id, publish_at=slot or to_utc_iso(now))
         try:
             video_id = upload_video(youtube, topic.video_path, body)
         except Exception as exc:
@@ -186,7 +194,7 @@ def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry
         db.add_quota(day, UPLOAD_COST)
         db.transition(topic.id, Status.HOCHGELADEN, youtube_id=video_id)
         print(f"Hochgeladen: #{topic.id} → Video-ID: {video_id}  https://youtu.be/{video_id}  "
-              f"(privat, geplant {slot})", flush=True)
+              + ("(sofort öffentlich)" if slot is None else f"(privat, geplant {slot})"), flush=True)
         done.append(format_upload_line(topic, body["snippet"]["title"], video_id, slot))
 
     if not dry_run and (done or errors):

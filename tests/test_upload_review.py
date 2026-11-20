@@ -111,8 +111,6 @@ def test_review_text_enthaelt_quelle_belege_und_warnung() -> None:
 
 # ------------------------------------------------------------------ regenerate / Upload-Meldung
 def test_regenerate_leert_artefakte_und_bevorzugt_thema() -> None:
-    from shorts.config import load_channels
-
     db = Database(":memory:")
     old = db.add_topic("de", "https://a.de/alt", "Q", "Alt", published_at="2026-01-01T00:00:00+00:00")
     db.update_fields(old, source_text="Quelltext bleibt")
@@ -155,3 +153,22 @@ def test_playability_parser() -> None:
         == ("LOGIN_REQUIRED", "Privates Video")
     assert Visibility("a", 200, "OK", "").label == "öffentlich"
     assert Visibility("a", 403, "ERROR", "Video nicht verfügbar").label == "nicht verfügbar"
+
+
+def test_sofort_oeffentlich_ohne_termin() -> None:
+    from shorts.upload import format_upload_line
+    db = Database(":memory:")
+    topic = db.get(_approved_topic(db, 3))
+    body = build_metadata(topic, load_channels()["de"], None)
+    assert body["status"]["privacyStatus"] == "public" and "publishAt" not in body["status"]
+    planned = build_metadata(topic, load_channels()["de"], "2026-11-21T10:00:00Z")
+    assert planned["status"]["privacyStatus"] == "private" and planned["status"]["publishAt"]
+    assert "sofort öffentlich" in format_upload_line(topic, "T", "abc", None)
+
+
+def test_dry_run_sofort(capsys: pytest.CaptureFixture[str]) -> None:
+    from shorts.config import Settings
+    db = Database(":memory:")
+    _approved_topic(db, 4)
+    run_uploads(Settings(), db, load_channels()["de"], dry_run=True, now=utc(2026, 11, 20, 18), immediate=True)
+    assert "sofort öffentlich" in capsys.readouterr().out

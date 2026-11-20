@@ -1,4 +1,4 @@
-"""Video-Rendering mit ffmpeg: 1080x1920, Hintergrund, eingebrannte ASS-Untertitel, Audio."""
+"""Video-Rendering mit ffmpeg: 1080x1920, Hintergrund, Faktenkarten, eingebrannte ASS-Untertitel, Audio."""
 from __future__ import annotations
 
 import json
@@ -13,8 +13,7 @@ from .subtitles import H, W, WordTiming, build_ass
 
 log = logging.getLogger(__name__)
 
-VIDEO_EXT = {".mp4", ".mov", ".mkv", ".webm"}
-IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp"}
+from .backgrounds import IMAGE_EXT  # noqa: E402  (eine Quelle für Dateitypen)
 TAIL_SECONDS = 0.4  # nur ausklingen lassen; keine Endkarte → sauberer Loop (Quelle steht in der Beschreibung)
 FPS = 30
 
@@ -102,8 +101,6 @@ def render(job: RenderJob) -> Path:
     ass_path = job.out_dir / "subs.ass"
     ass_path.write_text(ass, encoding="utf-8")
     out_path = (job.out_dir / "short.mp4").resolve()
-    speech_start = job.timings[0].start if job.timings else 0.0
-    speech_end = job.timings[-1].end if job.timings else speech
     # Erste Karte ab Frame 0, letzte bis zum letzten Frame → Kernzahl sofort sichtbar, nahtloser Loop
     cards = build_cards(job.key_facts, job.date_label, job.out_dir, 0.0, total)
     cmd = build_ffmpeg_cmd(job, ass_path, out_path, total, cards)

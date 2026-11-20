@@ -57,7 +57,7 @@ class Settings:
     openai_api_key: str | None = field(default_factory=lambda: _env("OPENAI_API_KEY"))
     openai_tts_model: str = field(default_factory=lambda: _env("OPENAI_TTS_MODEL", "gpt-4o-mini-tts") or "")
     openai_tts_voice: str = field(default_factory=lambda: _env("OPENAI_TTS_VOICE", "nova") or "nova")
-    tts_speed: float = field(default_factory=lambda: float(_env("TTS_SPEED", "1.15") or 1.15))
+    tts_speed: float = field(default_factory=lambda: float(_env("TTS_SPEED", "1.25") or 1.25))
     pixabay_api_key: str | None = field(default_factory=lambda: _env("PIXABAY_API_KEY"))
     subtitle_timing: str = field(default_factory=lambda: _env("SUBTITLE_TIMING", "whisper") or "whisper")
     telegram_bot_token: str | None = field(default_factory=lambda: _env("TELEGRAM_BOT_TOKEN"))

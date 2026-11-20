@@ -65,8 +65,8 @@ docker compose up -d bot
 - Kernzahlen + Datum stehen als **eigene Grafik groß im Vordergrund**; Stock-Material ist nur Hintergrund.
 - Claude liefert `key_facts` (1–3, Ziffern wie in der Quelle) + `date_label`; `unverified_numbers()` prüft jede
   Grafik-Zahl gegen den Quelltext → Warnung im Telegram-Review.
-- Stimme: `TTS_SPEED` (Standard 1.15, ffmpeg **atempo** vor Whisper – im Hörvergleich vom Betreiber gegenüber
-  rubberband und Originaltempo bevorzugt), OpenAI liefert WAV (verlustfrei). Skript 70–95 Wörter → ca. 32–43 s.
+- Stimme: `TTS_SPEED` **1.25** (ffmpeg **atempo** vor Whisper – im Hörvergleich gegenüber rubberband und
+  Originaltempo bevorzugt; Tempo 1,25 im zweiten Vergleich gewählt), OpenAI liefert WAV (verlustfrei). Skript 60–75 Wörter (siehe Retention-Regeln).
 - Testmodus (`--dry-run`, Demo-Pakete) nutzt espeak → klingt absichtlich roboterhaft; beim Versenden immer dazuschreiben.
 - **Kein fremdes Gameplay** (urheberrechtlich geschützt). Erlaubt: eigene Aufnahmen, Pixabay, eigene Animation.
 
@@ -94,33 +94,23 @@ docker compose up -d bot
 - Bundesregierung-Feeds: `/service/rss/breg-de/<id>/feed.xml` (1151246 Artikel, 1151244 Pressemitteilungen).
 - feedparser liefert UTC-`struct_time` → `calendar.timegm`, nicht `mktime` (Container-TZ ist Berlin).
 
-## Stand (2026-11-20)
-- [x] Schritt 1: Infrastruktur (Docker, Gruppe, TZ, Projekt, git init, Dockerfile, Compose)
-- [x] Schritt 2: Dry-Run-Pipeline bis Testvideo; echte Quellen abrufbar (103 Themen in `data/pipeline.sqlite3`)
-- [x] Erster Push auf `main` (öffentliches Repo); Refusal-Fallback entfernt, Whisper-Timing ist Standard
-- [x] Schritt 3 (Code): Review-Bot, Upload, `auth_youtube.py`, systemd-Units + Installer; 26 Tests grün
-- [x] Echter Testlauf (#104 Cyber Resilience Act): Skript gut, alle 8 Belege wörtlich gefunden, per Bot zugestellt.
-  Bot läuft (`docker compose up -d bot`).
-- [ ] **Offen: Videolänge.** Stimme `nova` spricht ~1,9 Wörter/s → 103 Wörter = 57 s statt 30–45 s.
-  Entscheidung des Betreibers nötig (Wortbereich senken und/oder Tempo erhöhen).
-- [ ] Whisper-Abgleich: Wortanzahl weicht oft ab (Zahlwörter, Bindestriche) → derzeit Schätzung im Sprechfenster;
-  besser wäre Sequenz-Alignment (difflib) zwischen Skript- und Whisper-Wörtern.
-- [ ] Betreiber: `sudo bash deploy/install_timers.sh`; `token_de.json` per scp
-- [x] Hintergründe (generierte Animation, Pixabay-Anbindung) + Faktenkarten + Stimme +15 %; 37 Tests grün.
-  Pixabay live getestet: Antwortformat passt, Cache/Drossel/Download-Limit greifen, Quellenangabe wird erfasst.
-- [x] Telegram-Buttons end-to-end getestet (#104 vom Betreiber abgelehnt, dann `regenerate` → `neu`,
-  wird beim nächsten Lauf bevorzugt mit Faktenkarten neu erzeugt).
-- [x] API-Projekt **nicht auditiert** → Uploads bleiben privat; Upload-Meldung enthält Studio-Link
-  (`https://studio.youtube.com/video/<id>/edit`). Bestätigt (Google-Hilfe 7300965): gesperrt, kein Einspruch,
-  nur Neu-Upload → `UPLOAD_MODE=manual` ist Standard; `api` erst nach Audit.
-- [x] `auth-check` ok; privater Test-Upload über die API erfolgreich (Betreiber löscht ihn).
-- [x] Timer installiert (Upload täglich 09:30, Pipeline So 06:00).
-- [x] Sichtbarkeitstest: API-Upload, in Studio auf öffentlich gestellt → von außen abspielbar (oEmbed 200, Status OK).
-  Daher `UPLOAD_MODE=api` ab erstem echten Video; prüfen, ob `publishAt` ohne Audit automatisch live geht.
-- [x] Upload-Lage 20.11. abends: #1 (Frühstartrente, 7oM_nNX4E3k) per API hochgeladen und von Hand
-  öffentlich gestellt → von außen abspielbar, Aufrufe vorhanden. #105 (tE-6-GO0Ltg, publishAt 17:00) danach
-  „nicht verfügbar“ – Ursache offen (gelöscht oder gesperrt?). `check-public` prüft das jederzeit.
-- Lehre: Ein abgebrochener `docker compose run` läuft im Hintergrund weiter → parallele Läufe sind jetzt per
-  `flock` auf `data/job.lock` gesperrt (pipeline + upload).
-- [ ] YouTube-API-Audit beantragen (sonst bleiben Uploads privat)
-- Offen/Ideen: eigene Hintergrundvideos in `assets/backgrounds/`, Piper als günstige TTS, englischer Kanal.
+## Stand (2026-11-20 abends)
+**Läuft:** Timer (Pipeline So 06:00, Upload täglich 09:30), Review-Bot (`docker compose up -d bot`),
+`UPLOAD_MODE=api`, `TTS_SPEED=1.25`, Pixabay aktiv. 57 Tests grün, pyflakes sauber.
+
+**YouTube ohne Audit – Beobachtungen:**
+- API-Upload + von Hand in Studio öffentlich → von außen abspielbar (#1 Frühstartrente, Aufrufe vorhanden).
+- #105 mit `publishAt` 17:00 war danach „nicht verfügbar“ – Ursache offen (gelöscht oder gesperrt?).
+- Testvideo `opEuZX4jC-I`: 13:02 öffentlich, 13:32 „nicht verfügbar“ (evtl. vom Betreiber gelöscht).
+- → `check-public` nach jedem Termin; bei gesperrten Videos `UPLOAD_MODE=manual`. Audit trotzdem beantragen.
+- `upload --sofort` (direkt öffentlich) ist eingebaut, ohne Audit noch unerprobt.
+
+**Offen / Ideen:**
+- Whisper-Abgleich per Sequenz-Alignment (Wortzahl weicht oft ab → derzeit Schätzung im Sprechfenster).
+- Untertitel zeigen Zahlen ausgeschrieben ("ZWEITAUSENDZWANZIG") – ggf. Ziffern anzeigen.
+- #104 (alte Fassung) wartet noch auf Freigabe → besser `regenerate 104`.
+- Webinterface (lokal, Passwort beim ersten Start) – vom Betreiber angefragt, noch nicht gebaut.
+- Englischer Kanal, Piper als günstige TTS, eigene Hintergrundclips.
+
+**Lehren:** Ein abgebrochener `docker compose run` läuft im Hintergrund weiter → `flock` auf `data/job.lock`.
+Vor Aussagen über YouTube-Sichtbarkeit immer von außen prüfen (gelöscht ≠ gesperrt ≠ privat).

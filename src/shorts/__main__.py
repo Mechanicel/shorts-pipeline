@@ -187,10 +187,12 @@ def cmd_upload(args, settings) -> int:
         from datetime import datetime, timezone
 
         from .upload import parse_publish_at, run_uploads
+        if args.sofort and args.publish_at:
+            raise ValueError("--sofort und --publish-at schließen sich aus")
         at = parse_publish_at(args.publish_at, datetime.now(timezone.utc)) if args.publish_at else None
-        return run_uploads(settings, db, channel, dry_run=args.dry_run, publish_at=at)
-    if args.publish_at:
-        raise ValueError("--publish-at gibt es nur im API-Modus (--mode api)")
+        return run_uploads(settings, db, channel, dry_run=args.dry_run, publish_at=at, immediate=args.sofort)
+    if args.publish_at or args.sofort:
+        raise ValueError("--publish-at/--sofort gibt es nur im API-Modus (--mode api)")
     if settings.upload_mode == "manual":
         from .manual import run_manual
         return run_manual(settings, db, channel, dry_run=args.dry_run)
@@ -222,6 +224,8 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--mode", choices=["manual", "api"], help="überschreibt UPLOAD_MODE aus .env")
     sp.add_argument("--publish-at", metavar="'JJJJ-MM-TT HH:MM'",
                     help="Wunschtermin (Berliner Zeit) für das erste freigegebene Video, z. B. für einen Test")
+    sp.add_argument("--sofort", action="store_true",
+                    help="alle Videos dieses Laufs sofort öffentlich hochladen (ohne Termin)")
     sp = add("check-public", cmd_check_public, "prüft von außen, ob hochgeladene Videos öffentlich sind")
     sp.add_argument("--id", action="append", default=[], help="zusätzliche YouTube-Video-ID")
     add("bot", cmd_bot, "Telegram-Review-Bot (dauerhaft)", channel=False)
