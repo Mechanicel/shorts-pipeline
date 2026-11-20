@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from shorts import sample_data
 from shorts.config import Settings, load_channels
-from shorts.db import Database, Status
+from shorts.db import Database
 from shorts.pipeline import Pipeline, RunReport
 from shorts.script import ShortScript
 from shorts.triage import Candidate, HaikuTriage, TriageBatch, TriageItem, prefilter_reason
