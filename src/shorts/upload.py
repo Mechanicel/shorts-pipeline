@@ -137,6 +137,7 @@ def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry
     pending = sorted(db.by_status(Status.FREIGEGEBEN, channel.key), key=lambda t: (t.updated_at, t.id))
     if not pending:
         log.info("Keine freigegebenen Videos für %s", channel.key)
+        print("Keine freigegebenen Videos – nichts hochzuladen.")
         return 0
 
     day = quota_day(now)
@@ -173,6 +174,8 @@ def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry
             continue
         db.add_quota(day, UPLOAD_COST)
         db.transition(topic.id, Status.HOCHGELADEN, youtube_id=video_id)
+        print(f"Hochgeladen: #{topic.id} → Video-ID: {video_id}  https://youtu.be/{video_id}  "
+              f"(privat, geplant {slot})", flush=True)
         done.append(format_upload_line(topic, body["snippet"]["title"], video_id, slot))
 
     if not dry_run and (done or errors):

@@ -174,6 +174,9 @@ def cmd_bot(args, settings) -> int:
 @_locked
 def cmd_upload(args, settings) -> int:
     db, channel = _db(settings, False), get_channel(args.channel)
+    if args.mode:  # Kommandozeile schlägt .env (z. B. für einen gezielten API-Test)
+        settings = replace(settings, upload_mode=args.mode)
+    log.info("Upload-Modus: %s", settings.upload_mode)
     if settings.upload_mode == "api":
         from .upload import run_uploads
         return run_uploads(settings, db, channel, dry_run=args.dry_run)
@@ -203,8 +206,9 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--limit", type=int, default=0, help="max. Anzahl Videos in diesem Lauf")
     add("collect", cmd_collect, "nur Quellen abrufen")
     add("status", cmd_status, "Anzahl Themen je Status", dry=True)
-    add("upload", cmd_upload, "fällige Videos: Upload-Paket an Telegram (manual) bzw. YouTube-Upload (api)",
-        dry=True)
+    sp = add("upload", cmd_upload, "fällige Videos: Upload-Paket an Telegram (manual) bzw. YouTube-Upload (api)",
+             dry=True)
+    sp.add_argument("--mode", choices=["manual", "api"], help="überschreibt UPLOAD_MODE aus .env")
     add("bot", cmd_bot, "Telegram-Review-Bot (dauerhaft)", channel=False)
     sp = add("regenerate", cmd_regenerate, "Thema mit neuem Skript + Video neu einreihen", channel=False)
     sp.add_argument("topic_id", type=int)
