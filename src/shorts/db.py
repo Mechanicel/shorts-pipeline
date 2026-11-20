@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS topics (
     telegram_message_id INTEGER,
     publish_at    TEXT,
     youtube_id    TEXT,
+    background_credit TEXT,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
     UNIQUE(channel, url)
@@ -102,6 +103,7 @@ class Topic:
     telegram_message_id: int | None
     publish_at: str | None
     youtube_id: str | None
+    background_credit: str | None
     created_at: str
     updated_at: str
 
@@ -126,6 +128,13 @@ class Database:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=30000")
         self._conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Fehlende Spalten bei bestehenden Datenbanken ergänzen (nur additive Änderungen)."""
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(topics)")}
+        if "background_credit" not in cols:
+            self._conn.execute("ALTER TABLE topics ADD COLUMN background_credit TEXT")
 
     def close(self) -> None:
         self._conn.close()

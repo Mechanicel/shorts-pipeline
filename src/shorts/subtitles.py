@@ -118,16 +118,16 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Caption,{FONT},104,&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,0,0,0,0,100,100,0,0,1,7,4,5,80,80,0,1
-Style: Title,{FONT_TITLE},84,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00141414,0,0,0,0,100,100,0,0,3,24,0,8,90,90,250,1
-Style: Source,{FONT_TITLE},54,&H00FFFFFF,&H00FFFFFF,&H00000000,&HB4000000,0,0,0,0,100,100,0,0,3,16,0,2,90,90,560,1
-Style: Outro,{FONT},64,&H0000D7FF,&H0000D7FF,&H00000000,&H96000000,0,0,0,0,100,100,0,0,1,6,3,5,90,90,0,1
+Style: Title,{FONT_TITLE},84,&H00FFFFFF,&H00FFFFFF,&H00000000,&H003A1F0B,0,0,0,0,100,100,0,0,3,24,0,8,90,90,250,1
+Style: Source,{FONT_TITLE},54,&H00FFFFFF,&H00FFFFFF,&H00000000,&H003A1F0B,0,0,0,0,100,100,0,0,3,16,0,2,90,90,560,1
+Style: Outro,{FONT},64,&H003FD2FF,&H003FD2FF,&H00000000,&H96000000,0,0,0,0,100,100,0,0,1,6,3,5,90,90,0,1
 Style: Badge,{FONT_TITLE},40,&H00FFFFFF,&H00FFFFFF,&H00000000,&H000000C8,0,0,0,0,100,100,0,0,3,12,0,7,50,50,80,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
-HIGHLIGHT = "&H0000D7FF&"  # Gelb (BGR)
+HIGHLIGHT = "&H003FD2FF&"  # Kanal-Gelb #FFD23F (ASS: BGR)
 
 
 def build_ass(*, timings: list[WordTiming], title: str, source_label: str, outro: str,
@@ -156,7 +156,7 @@ def build_ass(*, timings: list[WordTiming], title: str, source_label: str, outro
                 word = ass_escape(w.word.upper())
                 parts.append(f"{{\\c{HIGHLIGHT}}}{word}{{\\c&H00FFFFFF&}}" if j == i else word)
             pop = r"{\fscx92\fscy92\t(0,80,\fscx100\fscy100)}" if i == 0 else ""
-            ev(wt.start, seg_end, "Caption", r"{\pos(540,1080)}" + pop + " ".join(parts), layer=2)
+            ev(wt.start, seg_end, "Caption", r"{\pos(540,1290)}" + pop + " ".join(parts), layer=2)
 
     # Endkarte: Quellenhinweis + Outro
     ev(end_card_start, total_duration, "Source", r"{\fad(200,0)}" + ass_escape(f"Quelle: {source_label}"), layer=3)

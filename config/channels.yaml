@@ -27,6 +27,17 @@ channels:
       - "Fri 17:00"
       - "Sat 11:00"
       - "Sun 11:00"
+    # Pixabay-Suchbegriffe für bewegte Hintergründe (nur aktiv, wenn PIXABAY_API_KEY gesetzt ist).
+    # Querformat wird automatisch auf 9:16 zugeschnitten. Eigene Clips in assets/backgrounds/
+    # haben Vorrang; ohne beides: generierte Ball-Animation.
+    background_queries:
+      - kinetic sand
+      - marble run
+      - satisfying
+      - city night timelapse
+      - drone flight
+      - abstract particles
+      - neon tunnel
     sources:
       - name: Bundesregierung – Artikel
         type: rss

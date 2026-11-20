@@ -58,6 +58,18 @@ class EspeakTTS:
         return out
 
 
+def apply_speed(audio: Path, factor: float) -> Path:
+    """Beschleunigt die Sprachspur tonhöhenerhaltend (ffmpeg atempo) – funktioniert für jede Engine."""
+    if not 0.5 <= factor <= 2.0:
+        raise ValueError(f"TTS_SPEED {factor} außerhalb 0.5–2.0")
+    out = audio.with_name(f"{audio.stem}_x{factor:.2f}{audio.suffix}")
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(audio), "-filter:a", f"atempo={factor}",
+                    "-b:a", "192k", str(out)] if audio.suffix == ".mp3" else
+                   ["ffmpeg", "-y", "-v", "error", "-i", str(audio), "-filter:a", f"atempo={factor}", str(out)],
+                   check=True, capture_output=True)
+    return out
+
+
 def get_tts(settings: Settings, channel: ChannelConfig, dry_run: bool = False) -> TTSEngine:
     provider = "espeak" if dry_run else settings.tts_provider.lower()
     if provider == "openai":

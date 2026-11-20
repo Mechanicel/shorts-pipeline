@@ -60,7 +60,8 @@ def build_metadata(topic: Topic, channel: ChannelConfig, publish_at: str) -> dic
     s = topic.script or {}
     hashtags = list(dict.fromkeys(s.get("hashtags", []) + channel.default_hashtags))  # ohne Duplikate
     title = s.get("title", topic.title).replace("<", "").replace(">", "")[:100]
-    description = (f"{s.get('description', '')}\n\nQuelle: {topic.url}\n\n"
+    credit = f"\n{topic.background_credit}" if topic.background_credit else ""
+    description = (f"{s.get('description', '')}\n\nQuelle: {topic.url}{credit}\n\n"
                    f"Alle Angaben ohne Gewähr, Stand bei Veröffentlichung.\n\n{' '.join(hashtags)}")
     return {
         "snippet": {

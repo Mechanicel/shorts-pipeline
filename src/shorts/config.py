@@ -40,6 +40,7 @@ class ChannelConfig:
     max_videos_per_run: int
     publish_slots: list[str]
     sources: list[SourceConfig]
+    background_queries: list[str] = field(default_factory=list)
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -56,6 +57,8 @@ class Settings:
     openai_api_key: str | None = field(default_factory=lambda: _env("OPENAI_API_KEY"))
     openai_tts_model: str = field(default_factory=lambda: _env("OPENAI_TTS_MODEL", "gpt-4o-mini-tts") or "")
     openai_tts_voice: str = field(default_factory=lambda: _env("OPENAI_TTS_VOICE", "nova") or "nova")
+    tts_speed: float = field(default_factory=lambda: float(_env("TTS_SPEED", "1.15") or 1.15))
+    pixabay_api_key: str | None = field(default_factory=lambda: _env("PIXABAY_API_KEY"))
     subtitle_timing: str = field(default_factory=lambda: _env("SUBTITLE_TIMING", "whisper") or "whisper")
     telegram_bot_token: str | None = field(default_factory=lambda: _env("TELEGRAM_BOT_TOKEN"))
     telegram_chat_id: str | None = field(default_factory=lambda: _env("TELEGRAM_CHAT_ID"))
@@ -102,6 +105,7 @@ def load_channels(path: Path | None = None) -> dict[str, ChannelConfig]:
             max_videos_per_run=int(c.get("max_videos_per_run", 7)),
             publish_slots=list(c.get("publish_slots", [])),
             sources=[SourceConfig(**s) for s in c.get("sources", [])],
+            background_queries=list(c.get("background_queries", [])),
         )
     return channels
 

@@ -12,12 +12,13 @@ from . import sample_data
 from .config import ChannelConfig, Settings
 from .db import Database, Status, Topic
 from .notify import notify
-from .render import RenderJob, pick_background, probe_duration, render
+from .backgrounds import pick_background
+from .render import RenderJob, probe_duration, render
 from .script import (ClaudeScriptWriter, SampleScriptWriter, ScriptWriter, script_to_json,
-                     unverified_quotes)
+                     unverified_numbers, unverified_quotes)
 from .sources import collect_topics, fetch_article_text
 from .subtitles import estimate_timings, split_words, whisper_timings
-from .tts import TTSEngine, get_tts
+from .tts import TTSEngine, apply_speed, get_tts
 
 log = logging.getLogger(__name__)
 
@@ -98,8 +99,12 @@ class Pipeline:
                                note=f"Claude: {script.discard_reason}")
             report.discarded += 1
             return
-        missing = unverified_quotes(script, text)
-        note = ("Zitate nicht wörtlich im Quelltext: " + " | ".join(missing)) if missing else None
+        warnings = []
+        if missing := unverified_quotes(script, text):
+            warnings.append("Zitate nicht wörtlich im Quelltext: " + " | ".join(missing))
+        if numbers := unverified_numbers(script, text):
+            warnings.append("Grafik-Zahlen nicht im Quelltext: " + " | ".join(numbers))
+        note = "\n⚠️ ".join(warnings) or None
         self.db.transition(topic.id, Status.SKRIPT, source_text=text,
                            script_json=script_to_json(script), note=note)
         report.scripted += 1
@@ -122,6 +127,8 @@ class Pipeline:
         out_dir.mkdir(parents=True)
         narration: str = script["narration"]
         audio = self.tts.synthesize(narration, out_dir)
+        if abs(self.s.tts_speed - 1.0) > 0.01:  # vor Whisper, damit die Zeitstempel passen
+            audio = apply_speed(audio, self.s.tts_speed)
         self.db.update_fields(topic.id, audio_path=str(audio))
         duration = probe_duration(audio)
         words = split_words(narration)
@@ -131,10 +138,16 @@ class Pipeline:
             timings = estimate_timings(words, 0.15, max(duration - 0.25, 0.5))
         (out_dir / "timings.json").write_text(
             json.dumps([t.__dict__ for t in timings], ensure_ascii=False), encoding="utf-8")
+        bg = pick_background(
+            assets_dir=self.s.assets_dir, cache_dir=self.s.data_dir / "backgrounds", seed=topic.id,
+            pixabay_api_key=None if self.dry_run else self.s.pixabay_api_key,
+            queries=self.ch.background_queries)
+        self.db.update_fields(topic.id, background_credit=bg.credit)
         return render(RenderJob(
             audio=audio, timings=timings, title=script.get("overlay_title") or script["title"],
             source_url=topic.url, outro=self.ch.outro_text, out_dir=out_dir,
-            background=pick_background(self.s.assets_dir, topic.id),
+            background=bg.path, key_facts=script.get("key_facts") or [],
+            date_label=script.get("date_label") or "",
             badge="TESTVIDEO · DRY-RUN" if self.dry_run else None))
 
     def _fail(self, topic: Topic, stage: str, exc: Exception, report: RunReport) -> None:

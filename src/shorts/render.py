@@ -4,10 +4,11 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .graphics import CARD_Y, FADE, CardTiming, build_cards
 from .subtitles import H, W, WordTiming, build_ass
 
 log = logging.getLogger(__name__)
@@ -28,6 +29,8 @@ class RenderJob:
     out_dir: Path
     background: Path | None = None
     badge: str | None = None
+    key_facts: list[dict] = field(default_factory=list)
+    date_label: str = ""
 
 
 def probe_duration(path: Path) -> float:
@@ -42,12 +45,6 @@ def source_label(url: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
-def pick_background(assets_dir: Path, seed: int) -> Path | None:
-    bg_dir = assets_dir / "backgrounds"
-    files = sorted(p for p in bg_dir.glob("*") if p.suffix.lower() in VIDEO_EXT | IMAGE_EXT) if bg_dir.exists() else []
-    return files[seed % len(files)] if files else None
-
-
 def _background_input(bg: Path | None) -> list[str]:
     if bg is None:  # generierter, ruhiger Farbverlauf
         return ["-f", "lavfi", "-i",
@@ -57,16 +54,30 @@ def _background_input(bg: Path | None) -> list[str]:
     return ["-stream_loop", "-1", "-i", str(bg.resolve())]
 
 
-def build_ffmpeg_cmd(job: RenderJob, ass_path: Path, out_path: Path, total: float) -> list[str]:
-    vf = (f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps={FPS},"
-          f"eq=brightness=-0.10:saturation=0.9,"
-          f"subtitles=filename={ass_path.name}:fontsdir=/usr/share/fonts[v]")
-    af = "[1:a]loudnorm=I=-14:TP=-1.5:LRA=11,apad[a]"
+def build_filter(cards: list[CardTiming], ass_name: str) -> str:
+    """Hintergrund (auf 9:16 zugeschnitten, abgedunkelt, weich) → Faktenkarten → Untertitel."""
+    parts = [f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps={FPS},"
+             f"eq=brightness=-0.16:saturation=0.85,gblur=sigma=3[b0]"]
+    for i, c in enumerate(cards):
+        idx = 2 + i  # 0 = Hintergrund, 1 = Audio
+        parts.append(f"[{idx}:v]format=rgba,fade=t=in:st={c.start:.2f}:d={FADE}:alpha=1,"
+                     f"fade=t=out:st={max(c.end - FADE, c.start):.2f}:d={FADE}:alpha=1[c{i}]")
+        parts.append(f"[b{i}][c{i}]overlay=x=(W-w)/2:y={CARD_Y}:shortest=0[b{i + 1}]")
+    parts.append(f"[b{len(cards)}]subtitles=filename={ass_name}:fontsdir=/usr/share/fonts[v]")
+    parts.append("[1:a]loudnorm=I=-14:TP=-1.5:LRA=11,apad[a]")
+    return ";".join(parts)
+
+
+def build_ffmpeg_cmd(job: RenderJob, ass_path: Path, out_path: Path, total: float,
+                     cards: list[CardTiming] | None = None) -> list[str]:
+    cards = cards or []
+    card_inputs = [a for c in cards for a in ("-loop", "1", "-framerate", str(FPS), "-i", str(c.path.resolve()))]
     return [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
         *_background_input(job.background),
         "-i", str(job.audio.resolve()),
-        "-filter_complex", f"{vf};{af}",
+        *card_inputs,
+        "-filter_complex", build_filter(cards, ass_path.name),
         "-map", "[v]", "-map", "[a]",
         "-t", f"{total:.2f}",
         "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
@@ -87,7 +98,10 @@ def render(job: RenderJob) -> Path:
     ass_path = job.out_dir / "subs.ass"
     ass_path.write_text(ass, encoding="utf-8")
     out_path = (job.out_dir / "short.mp4").resolve()
-    cmd = build_ffmpeg_cmd(job, ass_path, out_path, total)
+    speech_start = job.timings[0].start if job.timings else 0.0
+    speech_end = job.timings[-1].end if job.timings else speech
+    cards = build_cards(job.key_facts, job.date_label, job.out_dir, speech_start + 0.3, speech_end)
+    cmd = build_ffmpeg_cmd(job, ass_path, out_path, total, cards)
     log.info("Rendere %s (%.1fs, Hintergrund: %s)", out_path, total, job.background or "Verlauf")
     # cwd = out_dir, damit der subtitles-Filter den Dateinamen ohne Escaping findet
     res = subprocess.run(cmd, cwd=job.out_dir, capture_output=True, text=True)

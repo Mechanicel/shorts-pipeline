@@ -27,10 +27,16 @@ SAMPLE_SCRIPT = {
         "Bisher waren es nur vierzehn Tage. Die neue Regel gilt für alle Bestellungen, "
         "die ab dem Stichtag aufgegeben werden. Und es wird noch besser: Liegt der Warenwert "
         "über vierzig Euro, muss der Händler die Kosten für die Rücksendung tragen. "
-        "Wichtig für dich: Heb den Kaufbeleg gut auf, damit du die Frist im Zweifel nachweisen kannst. "
+        "Wichtig für dich: Heb den Kaufbeleg auf, damit du die Frist im Zweifel nachweisen kannst. "
         "Kurz gesagt: Mehr Zeit zum Zurückschicken, und ab vierzig Euro zahlst du das Porto nicht."
     ),
     "description": "Testvideo der Pipeline mit fiktiven Beispieldaten. Kein echtes Gesetz.",
+    "key_facts": [
+        {"value": "30 Tage", "label": "Rücksendefrist"},
+        {"value": "14 Tage", "label": "bisherige Frist"},
+        {"value": "ab 40 €", "label": "Händler zahlt Porto"},
+    ],
+    "date_label": "AB 1. MÄRZ",
     "hashtags": ["#shorts", "#test", "#verbraucher"],
     "evidence": [
         {"claim": "Ab 1. März 30 Tage Rücksendefrist",

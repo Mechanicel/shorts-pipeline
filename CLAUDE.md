@@ -33,7 +33,9 @@ eigenen Quellen → neuer Eintrag in `config/channels.yaml`, eigene `credentials
 | `script.py` | Claude (`messages.parse` + Pydantic `ShortScript`, Modell/Effort aus `.env`; kein Refusal-Fallback – Ablehnung = Thema verworfen). Validierung 70–110 Wörter, 1 Korrekturversuch. Belege (`evidence`) mit wörtlichen Zitaten → `unverified_quotes()` prüft gegen Quelltext |
 | `tts.py` | `TTSEngine`-Protocol; `OpenAITTS`, `EspeakTTS` (Dry-Run). Piper/ElevenLabs: neue Klasse + `get_tts()` |
 | `subtitles.py` | Wort-Timings (Standard: Whisper-Wortzeitstempel; `SUBTITLE_TIMING=estimate` als kostenlose Schätzung), Chunking, ASS-Datei (Titel, Untertitel mit gelbem aktivem Wort, Endkarte mit Quelle) |
-| `render.py` | ffmpeg: 1080x1920, Hintergrund aus `assets/backgrounds/` (Video/Bild, sonst Farbverlauf), ASS eingebrannt, loudnorm −14 LUFS |
+| `backgrounds.py` | Hintergrund: eigene Clips (`assets/backgrounds/`) → Pixabay-Pool (`data/backgrounds/pixabay/`) → generierte Ball-Physik-Animation (`data/backgrounds/generated/`, 6 Varianten, gecacht) → Farbverlauf. Liefert `BackgroundChoice(path, credit)` |
+| `graphics.py` | Faktenkarten-PNGs im Kanal-Design (Navy `#0B1F3A`, Gelb `#FFD23F`, Montserrat): Datums-Pill + große Zahl + Label, gleichmäßig über die Sprechzeit verteilt |
+| `render.py` | ffmpeg: 1080x1920, Hintergrund auf 9:16 zugeschnitten + abgedunkelt + weichgezeichnet, Faktenkarten-Overlay, ASS eingebrannt, loudnorm −14 LUFS |
 | `pipeline.py` | Orchestrierung collect → script → render, Fehler pro Thema → Status `fehler`, Zusammenfassung per Telegram |
 | `notify.py` | Telegram-`sendMessage` für Fehler/Status (no-op ohne Konfiguration) |
 | `review_bot.py` | Telegram-Bot (python-telegram-bot, JobQueue pollt alle 60 s Status `video`): Video+Skript+Quelle+Belege, Buttons Freigeben/Ablehnen, nur `TELEGRAM_CHAT_ID` |
@@ -58,6 +60,21 @@ docker compose run --rm --entrypoint python job -m pytest -q
 docker compose up -d bot
 ```
 
+## Design- und Inhaltsregeln
+- Kernzahlen + Datum stehen als **eigene Grafik groß im Vordergrund**; Stock-Material ist nur Hintergrund.
+- Claude liefert `key_facts` (1–3, Ziffern wie in der Quelle) + `date_label`; `unverified_numbers()` prüft jede
+  Grafik-Zahl gegen den Quelltext → Warnung im Telegram-Review.
+- Stimme: `TTS_SPEED` (Standard 1.15, ffmpeg atempo vor Whisper), Skript 70–95 Wörter → ca. 32–43 s.
+- **Kein fremdes Gameplay** (urheberrechtlich geschützt). Erlaubt: eigene Aufnahmen, Pixabay, eigene Animation.
+
+## Pixabay-Regeln (verbindlich)
+- Suchanfragen 24 h cachen (`search_*.json`), Videos herunterladen statt hotlinken, max. 100 Requests/Minute
+  (Drossel 0,7 s), keine Massen-Downloads (max. 3 neue Clips pro Lauf, Pool max. 15).
+- Pixabay hat kein `orientation` → Querformat wird beim Rendern auf 9:16 zugeschnitten (Variante ≥ 1080 px Höhe).
+- Quellenangabe in der YouTube-Beschreibung: `Video: Pixabay <pageURL>` (Spalte `background_credit`).
+- API-Key steht in der Request-URL → Exception-Messages von httpx nie loggen (nur den Typ).
+- Pexels wurde verworfen (keine neuen Keys).
+
 ## Wichtige Fakten / Stolpersteine
 - YouTube: ungeprüfte API-Projekte → Uploads dauerhaft privat; API-Audit beantragen. OAuth-Consent auf „In Produktion“,
   sonst läuft das Refresh-Token nach 7 Tagen ab. Upload ≈ 1.600 Einheiten, Tageskontingent 10.000 (Reset Mitternacht Pacific Time).
@@ -77,6 +94,8 @@ docker compose up -d bot
 - [ ] Whisper-Abgleich: Wortanzahl weicht oft ab (Zahlwörter, Bindestriche) → derzeit Schätzung im Sprechfenster;
   besser wäre Sequenz-Alignment (difflib) zwischen Skript- und Whisper-Wörtern.
 - [ ] Betreiber: `sudo bash deploy/install_timers.sh`; `token_de.json` per scp
+- [x] Hintergründe (generierte Animation, Pixabay-Anbindung) + Faktenkarten + Stimme +15 %; 37 Tests grün.
+  Pixabay **ungetestet gegen die echte API**: `PIXABAY_API_KEY` fehlt noch in `.env`.
 - Lehre: Ein abgebrochener `docker compose run` läuft im Hintergrund weiter → parallele Läufe sind jetzt per
   `flock` auf `data/job.lock` gesperrt (pipeline + upload).
 - [ ] YouTube-API-Audit beantragen (sonst bleiben Uploads privat)

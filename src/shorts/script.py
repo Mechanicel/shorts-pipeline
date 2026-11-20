@@ -12,12 +12,17 @@ from .config import ChannelConfig, Settings
 
 log = logging.getLogger(__name__)
 
-MIN_WORDS, MAX_WORDS = 70, 110
+MIN_WORDS, MAX_WORDS = 70, 95  # bei TTS_SPEED 1.15 ≈ 32–43 s
 
 
 class Evidence(BaseModel):
     claim: str = Field(description="Eine konkrete Aussage aus dem Sprechtext (Zahl, Datum, Regel).")
     quote: str = Field(description="Wörtliches Zitat aus dem Quelltext, das die Aussage belegt.")
+
+
+class KeyFact(BaseModel):
+    value: str = Field(description="Kernzahl für die Grafik in Ziffern, max. 12 Zeichen, z. B. '30 Tage', '+4,2 %', '49 €'.")
+    label: str = Field(description="Was die Zahl bedeutet, max. 28 Zeichen, z. B. 'Rückgabefrist'.")
 
 
 class ShortScript(BaseModel):
@@ -29,6 +34,8 @@ class ShortScript(BaseModel):
     description: str = Field(description="YouTube-Beschreibung, 2–4 Sätze, ohne URL.")
     hashtags: list[str] = Field(description="3–6 Hashtags, jeweils mit #.")
     evidence: list[Evidence] = Field(description="Belege für jede Zahl/jedes Datum/jede Regel.")
+    key_facts: list[KeyFact] = Field(description="1–3 Kernzahlen für die Bildschirmgrafik, in Sprechreihenfolge.")
+    date_label: str = Field(description="Stichtag/Frist für die Grafik, max. 22 Zeichen, z. B. 'AB 1. MÄRZ 2027' oder 'BIS ENDE 2027'; leer, wenn die Quelle keinen nennt.")
 
 
 SYSTEM_PROMPT = """\
@@ -55,6 +62,13 @@ numbers written as people say them, no abbreviations the voice would stumble ove
 no URLs.
 - Close with one clear takeaway sentence. Do not ask for likes or subscriptions.
 - The title is factual and specific. overlay_title is a few punchy words for the screen.
+
+On-screen graphic (shown large in the foreground, so it must be exact):
+- key_facts: the 1–3 most important numbers, in the order they are spoken. value uses digits and \
+units exactly as in the source (e.g. "30 Tage", "4,2 %", "49 €"); label says in a few words what it is.
+- date_label: the effective date or deadline exactly as stated in the source, in capitals \
+(e.g. "AB 1. MÄRZ 2027", "BIS ENDE 2027"). Empty string if the source names none. Never guess a year.
+- Both follow rule 1: only what the source text states.
 """
 
 USER_TEMPLATE = """\
@@ -86,6 +100,14 @@ def unverified_quotes(script: ShortScript, source_text: str) -> list[str]:
     return [e.quote for e in script.evidence if _norm(e.quote).strip('".') not in src]
 
 
+def unverified_numbers(script: ShortScript, source_text: str) -> list[str]:
+    """Zahlen aus Grafik (key_facts, date_label), die so nicht im Quelltext vorkommen."""
+    src_numbers = set(re.findall(r"\d+(?:[.,]\d+)?", source_text))
+    shown = [f.value for f in script.key_facts] + ([script.date_label] if script.date_label else [])
+    return [text for text in shown
+            if any(n not in src_numbers for n in re.findall(r"\d+(?:[.,]\d+)?", text))]
+
+
 def validate_script(script: ShortScript) -> list[str]:
     problems: list[str] = []
     if script.discard:
@@ -97,6 +119,13 @@ def validate_script(script: ShortScript) -> list[str]:
         problems.append("Titel länger als 100 Zeichen (YouTube-Limit).")
     if not script.evidence:
         problems.append("Keine Belege angegeben.")
+    if not 1 <= len(script.key_facts) <= 3:
+        problems.append("key_facts muss 1–3 Einträge haben.")
+    for f in script.key_facts:
+        if len(f.value) > 14 or len(f.label) > 32:
+            problems.append(f"Grafiktext zu lang: '{f.value}' / '{f.label}'.")
+    if len(script.date_label) > 24:
+        problems.append("date_label zu lang.")
     return problems
 
 
@@ -131,7 +160,7 @@ class ClaudeScriptWriter:
         if response.stop_reason == "refusal":
             return ShortScript(discard=True, discard_reason="Modell hat die Anfrage abgelehnt.",
                                title="", overlay_title="", narration="", description="",
-                               hashtags=[], evidence=[])
+                               hashtags=[], evidence=[], key_facts=[], date_label="")
         if response.stop_reason == "max_tokens" or response.parsed_output is None:
             raise RuntimeError(f"Keine gültige Antwort (stop_reason={response.stop_reason})")
         return response.parsed_output

@@ -22,8 +22,10 @@ Status je Thema: `neu → skript → video → wartet_auf_freigabe → freigegeb
 3. **Test ohne Keys:** `docker compose run --rm job pipeline --dry-run`
    → `output/dryrun/de/00001/short.mp4` (Beispieldaten, espeak-Stimme, „TESTVIDEO“-Badge)
 4. **Zugangsdaten:** `cp .env.example .env && chmod 600 .env`, dann selbst ausfüllen.
-5. **Hintergründe (optional):** Hochkant-Videos oder Bilder nach `assets/backgrounds/` legen
-   (ohne Dateien wird ein animierter Farbverlauf genutzt).
+5. **Hintergründe (optional):** Reihenfolge: eigene Clips in `assets/backgrounds/` (z. B. selbst aufgenommenes
+   Gameplay) → Pixabay (mit `PIXABAY_API_KEY`, Suchbegriffe in `channels.yaml`, Quellenangabe automatisch in der
+   Beschreibung) → selbst generierte Ball-Animation. Kernzahlen und Datum erscheinen immer als eigene Faktenkarte
+   im Kanal-Design im Vordergrund.
 
 ## YouTube-Zugang (einmalig)
 

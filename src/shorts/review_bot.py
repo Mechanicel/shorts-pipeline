@@ -35,6 +35,9 @@ def format_review(topic: Topic) -> str:
         f"📝 Sprechtext ({word_count(narration)} Wörter):",
         narration,
         "",
+        "🔢 Grafik: " + (f"[{s['date_label']}] " if s.get("date_label") else "")
+        + " · ".join(f"{f.get('value')} = {f.get('label')}" for f in s.get("key_facts", [])),
+        "",
         "🔎 Belege:",
     ]
     for ev in s.get("evidence", []):
