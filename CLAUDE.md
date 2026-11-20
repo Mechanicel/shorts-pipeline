@@ -39,6 +39,7 @@ eigenen Quellen → neuer Eintrag in `config/channels.yaml`, eigene `credentials
 | `pipeline.py` | Orchestrierung collect → script → render, Fehler pro Thema → Status `fehler`, Zusammenfassung per Telegram |
 | `notify.py` | Telegram-`sendMessage` für Fehler/Status (no-op ohne Konfiguration) |
 | `review_bot.py` | Telegram-Bot (python-telegram-bot, JobQueue pollt alle 60 s Status `video`): Video+Skript+Quelle+Belege, Buttons Freigeben/Ablehnen, nur `TELEGRAM_CHAT_ID` |
+| `manual.py` | **Standard (`UPLOAD_MODE=manual`)**: Termin je freigegebenem Video (gleiche Slot-Logik), am Termin-Tag Upload-Paket an Telegram (MP4 als Dokument, Titel, Beschreibung inkl. Pixabay-Credit, Tags, Termin + Button `up:<id>`), Status `paket_gesendet` → Button → `hochgeladen` |
 | `upload.py` | YouTube Data API v3, privat + `publishAt` auf `publish_slots` (Berlin) verteilt, Quota je Pacific-Tag in SQLite, Token-Refresh schreibt `credentials/token_<key>.json` zurück |
 | `__main__.py` | CLI: `pipeline [--dry-run] [--limit N]`, `collect`, `status`, `retry <id>`, `bot`, `upload [--dry-run]` |
 
@@ -101,8 +102,10 @@ docker compose up -d bot
 - [x] Telegram-Buttons end-to-end getestet (#104 vom Betreiber abgelehnt, dann `regenerate` → `neu`,
   wird beim nächsten Lauf bevorzugt mit Faktenkarten neu erzeugt).
 - [x] API-Projekt **nicht auditiert** → Uploads bleiben privat; Upload-Meldung enthält Studio-Link
-  (`https://studio.youtube.com/video/<id>/edit`). Offen: prüfen, ob gesperrte Videos sich in Studio überhaupt
-  umstellen lassen (vermutlich nicht → ggf. manueller Upload-Modus).
+  (`https://studio.youtube.com/video/<id>/edit`). Bestätigt (Google-Hilfe 7300965): gesperrt, kein Einspruch,
+  nur Neu-Upload → `UPLOAD_MODE=manual` ist Standard; `api` erst nach Audit.
+- [x] `auth-check` ok; privater Test-Upload über die API erfolgreich (Betreiber löscht ihn).
+- [ ] Betreiber: `sudo bash deploy/install_timers.sh` (sudo braucht Passwort).
 - Lehre: Ein abgebrochener `docker compose run` läuft im Hintergrund weiter → parallele Läufe sind jetzt per
   `flock` auf `data/job.lock` gesperrt (pipeline + upload).
 - [ ] YouTube-API-Audit beantragen (sonst bleiben Uploads privat)

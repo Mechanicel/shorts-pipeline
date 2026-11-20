@@ -173,9 +173,14 @@ def cmd_bot(args, settings) -> int:
 
 @_locked
 def cmd_upload(args, settings) -> int:
-    from .upload import run_uploads
-
-    return run_uploads(settings, _db(settings, False), get_channel(args.channel), dry_run=args.dry_run)
+    db, channel = _db(settings, False), get_channel(args.channel)
+    if settings.upload_mode == "api":
+        from .upload import run_uploads
+        return run_uploads(settings, db, channel, dry_run=args.dry_run)
+    if settings.upload_mode == "manual":
+        from .manual import run_manual
+        return run_manual(settings, db, channel, dry_run=args.dry_run)
+    raise ValueError(f"UPLOAD_MODE '{settings.upload_mode}' unbekannt (manual | api)")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -198,7 +203,8 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--limit", type=int, default=0, help="max. Anzahl Videos in diesem Lauf")
     add("collect", cmd_collect, "nur Quellen abrufen")
     add("status", cmd_status, "Anzahl Themen je Status", dry=True)
-    add("upload", cmd_upload, "freigegebene Videos zu YouTube hochladen", dry=True)
+    add("upload", cmd_upload, "fällige Videos: Upload-Paket an Telegram (manual) bzw. YouTube-Upload (api)",
+        dry=True)
     add("bot", cmd_bot, "Telegram-Review-Bot (dauerhaft)", channel=False)
     sp = add("regenerate", cmd_regenerate, "Thema mit neuem Skript + Video neu einreihen", channel=False)
     sp.add_argument("topic_id", type=int)

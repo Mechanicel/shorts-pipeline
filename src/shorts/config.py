@@ -65,6 +65,7 @@ class Settings:
     youtube_max_uploads_per_day: int = field(
         default_factory=lambda: int(_env("YOUTUBE_MAX_UPLOADS_PER_DAY", "5") or 5))
     youtube_daily_quota: int = field(default_factory=lambda: int(_env("YOUTUBE_DAILY_QUOTA", "10000") or 10000))
+    upload_mode: str = field(default_factory=lambda: (_env("UPLOAD_MODE", "manual") or "manual").lower())
     log_level: str = field(default_factory=lambda: _env("LOG_LEVEL", "INFO") or "INFO")
     default_channel: str = field(default_factory=lambda: _env("DEFAULT_CHANNEL", "de") or "de")
 

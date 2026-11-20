@@ -1,5 +1,5 @@
 [Unit]
-Description=Shorts-Upload: freigegebene Videos zu YouTube (Kanal de)
+Description=Shorts-Upload (Kanal de): fällige Upload-Pakete an Telegram bzw. YouTube-Upload je nach UPLOAD_MODE
 Requires=docker.service
 After=docker.service network-online.target
 Wants=network-online.target

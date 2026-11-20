@@ -1,6 +1,7 @@
 """SQLite-Persistenz mit expliziter Status-Maschine.
 
 neu → skript → video → wartet_auf_freigabe → freigegeben → hochgeladen
+(manueller Modus: freigegeben → paket_gesendet → hochgeladen, bestätigt per Telegram-Button)
 Nebenwege: verworfen (Claude unsicher/irrelevant), abgelehnt (von dir), fehler (technisch, retrybar).
 """
 from __future__ import annotations
@@ -24,6 +25,7 @@ class Status(StrEnum):
     VIDEO = "video"
     WARTET = "wartet_auf_freigabe"
     FREIGEGEBEN = "freigegeben"
+    PAKET = "paket_gesendet"
     HOCHGELADEN = "hochgeladen"
     ABGELEHNT = "abgelehnt"
     VERWORFEN = "verworfen"
@@ -35,7 +37,8 @@ ALLOWED: dict[Status, set[Status]] = {
     Status.SKRIPT: {Status.VIDEO, Status.FEHLER},
     Status.VIDEO: {Status.WARTET, Status.FEHLER},
     Status.WARTET: {Status.FREIGEGEBEN, Status.ABGELEHNT},
-    Status.FREIGEGEBEN: {Status.HOCHGELADEN, Status.FEHLER},
+    Status.FREIGEGEBEN: {Status.HOCHGELADEN, Status.PAKET, Status.FEHLER},
+    Status.PAKET: {Status.HOCHGELADEN},
     Status.FEHLER: {Status.NEU, Status.SKRIPT, Status.VIDEO, Status.FREIGEGEBEN},  # Retry
     Status.HOCHGELADEN: set(),
     Status.ABGELEHNT: {Status.NEU},  # nur per CLI 'regenerate': neues Skript + Video

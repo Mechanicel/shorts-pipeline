@@ -59,7 +59,7 @@ def review_keyboard(topic_id: int) -> InlineKeyboardMarkup:
 
 def parse_callback(data: str) -> tuple[Status, int] | None:
     action, _, raw_id = data.partition(":")
-    target = {"ok": Status.FREIGEGEBEN, "no": Status.ABGELEHNT}.get(action)
+    target = {"ok": Status.FREIGEGEBEN, "no": Status.ABGELEHNT, "up": Status.HOCHGELADEN}.get(action)
     if target is None or not raw_id.isdigit():
         return None
     return target, int(raw_id)
@@ -121,8 +121,13 @@ class ReviewBot:
         except (TransitionError, KeyError):
             await query.answer("Schon erledigt.")
             return
-        label = "✅ FREIGEGEBEN – wird beim nächsten Upload eingeplant" if target == Status.FREIGEGEBEN \
-            else "❌ ABGELEHNT"
+        label = {
+            Status.FREIGEGEBEN: ("✅ FREIGEGEBEN – Upload-Paket kommt am Termin-Tag um 09:30"
+                                 if self.s.upload_mode == "manual"
+                                 else "✅ FREIGEGEBEN – wird beim nächsten Upload eingeplant"),
+            Status.ABGELEHNT: "❌ ABGELEHNT",
+            Status.HOCHGELADEN: "📺 Als hochgeladen markiert – danke!",
+        }[target]
         await query.answer(label[:60])
         await query.edit_message_text(f"{query.message.text}\n\n{label}" if query.message else label,
                                       disable_web_page_preview=True)

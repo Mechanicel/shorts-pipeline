@@ -9,7 +9,9 @@ Untertiteln → Freigabe per Telegram → YouTube-Upload mit geplanter Veröffen
 ```
 So (Timer)   pipeline:  Quellen (RSS/HTML) ─► SQLite ─► Claude-Skript ─► TTS ─► ffmpeg-Video
 dauerhaft    bot:       neues Video ─► Telegram (Video, Skript, Quelle, Belege) ─► [Freigeben]/[Ablehnen]
-täglich      upload:    freigegeben ─► YouTube (privat, publishAt auf Wochen-Slots verteilt)
+täglich      upload:    UPLOAD_MODE=manual (Standard): am Termin-Tag Upload-Paket an Telegram
+                        (MP4, Titel, Beschreibung, Tags, Termin) → du lädst in YouTube Studio hoch → [✅ Hochgeladen]
+                        UPLOAD_MODE=api (nach API-Audit): YouTube-Upload privat + publishAt
 ```
 
 Status je Thema: `neu → skript → video → wartet_auf_freigabe → freigegeben → hochgeladen`
@@ -51,7 +53,9 @@ Status je Thema: `neu → skript → video → wartet_auf_freigabe → freigegeb
    Danach `token_de.json` und `client_secret.json` auf dem Laptop löschen bzw. sicher verwahren.
 
 > **API-Audit:** Uploads aus ungeprüften API-Projekten sperrt YouTube auf „privat“, auch mit `publishAt`.
-> Die Telegram-Meldung nach dem Upload enthält deshalb je Video einen YouTube-Studio-Link.
+> Ohne Einspruchsmöglichkeit; nur ein Neu-Upload hilft (support.google.com/youtube/answer/7300965).
+> Deshalb ist `UPLOAD_MODE=manual` Standard: Der Bot schickt fertige Upload-Pakete, du lädst selbst hoch.
+> Nach bestandenem Audit `UPLOAD_MODE=api` setzen; die Upload-Meldung enthält dann je Video einen Studio-Link.
 > Für automatisches Veröffentlichen das [Audit-Formular](https://support.google.com/youtube/contact/yt_api_form)
 > einreichen; bis dahin im YouTube Studio manuell auf „Öffentlich“/„Geplant“ stellen.
 
@@ -70,7 +74,7 @@ Status je Thema: `neu → skript → video → wartet_auf_freigabe → freigegeb
 | Timer | Zeit | Job |
 |---|---|---|
 | `shorts-pipeline.timer` | So 06:00 | `pipeline --channel de` |
-| `shorts-upload.timer` | täglich 09:30 (nach Quota-Reset 09:00 MEZ) | `upload --channel de` |
+| `shorts-upload.timer` | täglich 09:30 (nach Quota-Reset 09:00 MEZ) | `upload --channel de` – manual: fällige Pakete an Telegram, api: YouTube-Upload |
 
 Schlägt ein Job fehl (auch wenn Docker gar nicht startet), meldet `shorts-failure@.service` das per Telegram.
 Kontrolle: `systemctl list-timers 'shorts-*'`, Logs: `journalctl -u shorts-pipeline -e`.

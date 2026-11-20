@@ -134,7 +134,7 @@ def _is_quota_error(exc: Exception) -> bool:
 def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry_run: bool = False,
                 now: datetime | None = None) -> int:
     now = now or datetime.now(timezone.utc)
-    pending = sorted(db.by_status(Status.FREIGEGEBEN, channel.key), key=lambda t: t.updated_at)
+    pending = sorted(db.by_status(Status.FREIGEGEBEN, channel.key), key=lambda t: (t.updated_at, t.id))
     if not pending:
         log.info("Keine freigegebenen Videos für %s", channel.key)
         return 0
