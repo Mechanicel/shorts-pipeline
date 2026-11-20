@@ -8,9 +8,10 @@
     <div class="stat">{{ "%.2f"|format(cost_week*eur) | replace(".", ",") }} €</div>
     <div class="muted">diese Woche · Monat {{ "%.2f"|format(cost_month*eur) | replace(".", ",") }} € ·
       Ø {{ "%.2f"|format(avg_video*eur) | replace(".", ",") }} € pro Video</div></div>
-  <div class="card"><div class="muted">YouTube-Kontingent heute</div>
-    <div class="stat">{{ quota.used }} / {{ quota.limit }}</div>
-    <div class="muted">{{ plural(quota.possible, "Upload", "Uploads") }} möglich · Reset {{ quota.reset }}</div></div>
+  <div class="card"><div class="muted">Uploads heute</div>
+    <div class="stat">{{ uploads.today }} / {{ uploads.limit }}</div>
+    <div class="muted">laut eigener Zählung · Reset {{ uploads.reset }}</div>
+    {% if uploads.block %}<div class="warn" style="margin-top:6px">{{ uploads.block.text }}</div>{% endif %}</div>
   <div class="card"><div class="muted">Zeitplan</div>
     <div>Erstellen: {% if sched.pipeline.enabled %}<span class="pill on">an</span> {{ next_runs.pipeline or "" }}{% else %}<span class="pill off">aus</span>{% endif %}</div>
     <div>Upload: {% if sched.upload.enabled %}<span class="pill on">an</span> {{ next_runs.upload or "" }}{% else %}<span class="pill off">aus</span>{% endif %}</div>
@@ -40,7 +41,7 @@
       {% if api_public %}API-Uploads werden derzeit öffentlich (von außen geprüft).{% else %}Ob API-Uploads öffentlich werden, ist noch nicht geprüft.{% endif %}
     {% else %}<span class="pill">Manuell über YouTube Studio</span> Am Termin-Tag kommt ein Upload-Paket per Telegram.{% endif %}
   </p>
-  {% if upload_blocked %}<p class="warn">Upload gesperrt: {{ quota.reason }} (ein Upload braucht {{ upload_cost }} Einheiten, frei: {{ quota.free }}).</p>{% endif %}
+  {% if uploads.block %}<p class="warn">{{ uploads.block.text }} Timer-Uploads pausieren bis dahin; manuell kannst du es trotzdem versuchen.</p>{% endif %}
   {% for t in approved %}{% set s = t.script or {} %}
   <div class="approved-row" id="t{{ t.id }}">
     <video src="/media/{{ t.id }}.mp4" preload="metadata" muted class="thumb"></video>
@@ -55,7 +56,7 @@
           {% for slot in free_slots[1:] %}<option value="{{ slot }}">{{ slot | local_time }}</option>{% endfor %}
           <option value="sofort">sofort öffentlich</option>
         </select>
-        <button class="primary" {% if running or upload_blocked %}disabled{% endif %}>Hochladen</button>
+        <button class="primary" {% if running %}disabled{% endif %}>Hochladen</button>
       </form>
       <form method="post" action="/topics/{{ t.id }}/unapprove" style="margin-top:6px"><button class="ghost small">Freigabe zurücknehmen</button></form>
     </div>
@@ -64,7 +65,7 @@
   {% if approved|length > 1 %}
   <form method="post" action="/actions/upload" class="row" style="margin-top:12px">
     <input type="hidden" name="when" value="termin">
-    <button class="primary" {% if running or upload_blocked %}disabled{% endif %}>Alle {{ approved|length }} mit den nächsten freien Terminen hochladen</button>
+    <button class="primary" {% if running %}disabled{% endif %}>Alle {{ approved|length }} mit den nächsten freien Terminen hochladen</button>
   </form>
   {% endif %}
 </div>

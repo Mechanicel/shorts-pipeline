@@ -62,9 +62,7 @@ class Settings:
     subtitle_timing: str = field(default_factory=lambda: _env("SUBTITLE_TIMING", "whisper") or "whisper")
     telegram_bot_token: str | None = field(default_factory=lambda: _env("TELEGRAM_BOT_TOKEN"))
     telegram_chat_id: str | None = field(default_factory=lambda: _env("TELEGRAM_CHAT_ID"))
-    youtube_max_uploads_per_day: int = field(
-        default_factory=lambda: int(_env("YOUTUBE_MAX_UPLOADS_PER_DAY", "5") or 5))
-    youtube_daily_quota: int = field(default_factory=lambda: int(_env("YOUTUBE_DAILY_QUOTA", "10000") or 10000))
+    yt_uploads_per_day: int = field(default_factory=lambda: int(_env("YT_UPLOADS_PER_DAY", "100") or 100))
     upload_mode: str = field(default_factory=lambda: (_env("UPLOAD_MODE", "manual") or "manual").lower())
     tts_usd_per_min: float = field(default_factory=lambda: float(_env("TTS_USD_PER_MIN", "0.015") or 0.015))
     whisper_usd_per_min: float = field(default_factory=lambda: float(_env("WHISPER_USD_PER_MIN", "0.006") or 0.006))

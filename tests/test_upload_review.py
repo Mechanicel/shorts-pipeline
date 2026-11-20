@@ -72,21 +72,19 @@ def test_metadaten() -> None:
     assert body["snippet"]["description"].count("#shorts") == 1  # Hashtags dedupliziert
 
 
-def test_dry_run_upload_respektiert_quota(capsys: pytest.CaptureFixture[str]) -> None:
-    from dataclasses import replace
+def test_dry_run_plant_alle_ohne_vorab_blockade(capsys: pytest.CaptureFixture[str]) -> None:
     from shorts.config import Settings
 
     db = Database(":memory:")
     for i in range(4):
         _approved_topic(db, i)
-    now = utc(2026, 11, 20, 12)
-    db.add_quota(quota_day(now), 6000)  # noch 4000 frei → 2 Uploads
-    settings = replace(Settings(), youtube_max_uploads_per_day=5, youtube_daily_quota=10000)
-    run_uploads(settings, db, load_channels()["de"], dry_run=True, now=now)
-    out = [line for line in capsys.readouterr().out.strip().splitlines() if line.startswith("[dry-run]")]
-    assert len(out) == 2
+    for _ in range(99):
+        db.count_upload(quota_day(utc(2026, 11, 20, 12)))  # eigene Zählung "fast voll" – egal
+    run_uploads(Settings(), db, load_channels()["de"], dry_run=True, now=utc(2026, 11, 20, 12))
+    out = [line for line in capsys.readouterr().out.splitlines() if line.startswith("[dry-run]")]
+    assert len(out) == 4
     slots = [line.split("→ ")[1].split()[0] for line in out]
-    assert len(set(slots)) == 2  # unterschiedliche Slots
+    assert len(set(slots)) == 4  # unterschiedliche Termine
     assert all(t.status == Status.FREIGEGEBEN for t in db.by_status(Status.FREIGEGEBEN))  # nichts verändert
 
 

@@ -21,7 +21,7 @@
     <label><input type="checkbox" name="upload_enabled" {% if sched.upload.enabled %}checked{% endif %}> täglich automatisch hochladen</label>
     {% if next_runs.upload %}<span class="muted">· nächster Lauf {{ next_runs.upload }}</span>{% endif %}
     <p class="row"><label for="upload_time">um</label> <input type="time" id="upload_time" name="upload_time" value="{{ sched.upload.time }}" required>
-      <span class="muted">(YouTube-Kontingent wird um 09:00 zurückgesetzt)</span></p>
+      <span class="muted">(YouTube setzt das Upload-Kontingent um Mitternacht Pacific Time zurück – derzeit {{ reset_time }} Uhr deutscher Zeit)</span></p>
     <h3>Veröffentlichungstermine</h3>
     <p class="muted">Jedes freigegebene Video bekommt den nächsten freien Termin (mind. 2 h Vorlauf). Zum Entfernen die Uhrzeit leeren.</p>
     {% for day, t in slot_rows %}

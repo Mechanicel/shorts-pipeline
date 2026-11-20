@@ -13,7 +13,7 @@ from shorts.config import Settings, load_channels
 from shorts.db import Database, Status
 from shorts.pipeline import RunReport, source_age_problem
 from shorts.publiccheck import Visibility, parse_publish_date, run_check
-from shorts.upload import quota_reset, quota_status, run_uploads
+from shorts.upload import run_uploads
 from shorts.web.jobs import read_result
 
 
@@ -32,57 +32,10 @@ def _approved(db: Database, n: int) -> int:
 
 @pytest.fixture
 def quiet() -> Settings:
-    return replace(Settings(), telegram_bot_token=None, telegram_chat_id=None,
-                   youtube_max_uploads_per_day=5, youtube_daily_quota=10000)
+    return replace(Settings(), telegram_bot_token=None, telegram_chat_id=None)
 
 
 # --- Upload-Ergebnis ehrlich melden ---------------------------------------------------------------
-def test_kontingent_leer_meldet_0_von_1(quiet, capsys) -> None:
-    db = Database(":memory:")
-    _approved(db, 1)
-    now = utc(2026, 11, 20, 19, 15)  # 20:15 Berlin
-    db.add_quota(upload.quota_day(now), 9600)
-    rc = run_uploads(quiet, db, load_channels()["de"], now=now)
-    out = capsys.readouterr().out
-    assert rc == 0  # Befund, kein Absturz
-    assert "ERGEBNIS [warn]: 0 von 1 Video hochgeladen – Kontingent (9600/10000), wieder ab Sa 21.11. 09:00" in out
-    assert db.by_status(Status.FREIGEGEBEN)[0].publish_at is None  # nichts reserviert
-
-
-def test_kontingent_reset_und_status(quiet) -> None:
-    assert quota_reset(utc(2026, 11, 20, 19, 0)).strftime("%d.%m. %H:%M") == "21.11. 09:00"
-    assert quota_reset(utc(2026, 7, 6, 12, 0)).strftime("%d.%m. %H:%M") == "07.07. 09:00"  # PDT/MESZ
-    db = Database(":memory:")
-    db.add_quota(upload.quota_day(utc(2026, 11, 20, 19)), 9600)
-    q = quota_status(quiet, db, utc(2026, 11, 20, 19))
-    assert (q["used"], q["free"], q["possible"]) == (9600, 400, 0)
-
-
-def test_teilweise_hochgeladen_ist_warnung(quiet, capsys, monkeypatch) -> None:
-    db = Database(":memory:")
-    for i in range(3):
-        _approved(db, i)
-    now = utc(2026, 11, 20, 8, 30)
-    db.add_quota(upload.quota_day(now), 6400)  # noch 2 Uploads möglich
-    monkeypatch.setattr(upload, "youtube_client", lambda ch: object())
-    ids = iter(["A", "B", "C"])
-    monkeypatch.setattr(upload, "upload_video", lambda yt, path, body: next(ids))
-    run_uploads(replace(quiet, youtube_max_uploads_per_day=10), db, load_channels()["de"], now=now)
-    assert "ERGEBNIS [warn]: 2 von 3 Videos hochgeladen – Kontingent (6400/10000)" in capsys.readouterr().out
-
-
-def test_tageslimit_wird_als_grund_genannt(quiet, capsys, monkeypatch) -> None:
-    db = Database(":memory:")
-    for i in range(3):
-        _approved(db, i)
-    now = utc(2026, 11, 20, 8, 30)
-    db.add_quota(upload.quota_day(now), 6400)  # 4 von max. 5 Uploads verbraucht
-    monkeypatch.setattr(upload, "youtube_client", lambda ch: object())
-    monkeypatch.setattr(upload, "upload_video", lambda yt, path, body: "X")
-    run_uploads(quiet, db, load_channels()["de"], now=now)
-    assert "1 von 3 Videos hochgeladen – Tageslimit (5 Uploads)" in capsys.readouterr().out
-
-
 # --- Termin-Vergabe ohne Kollision ----------------------------------------------------------------
 def test_drei_videos_drei_verschiedene_termine(quiet, monkeypatch) -> None:
     db = Database(":memory:")

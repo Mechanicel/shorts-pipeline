@@ -10,5 +10,5 @@ Type=oneshot
 User=__USER__
 Group=docker
 WorkingDirectory=__DIR__
-ExecStart=/usr/bin/docker compose run --rm job upload --channel de
+ExecStart=/usr/bin/docker compose run --rm job upload --channel de --scheduled
 TimeoutStartSec=1h

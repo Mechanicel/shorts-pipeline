@@ -95,6 +95,10 @@ CREATE TABLE IF NOT EXISTS job_runs (
     result_status  TEXT,            -- ok | warn | error
     result_summary TEXT
 );
+CREATE TABLE IF NOT EXISTS upload_counts (
+    day      TEXT PRIMARY KEY,      -- Datum in America/Los_Angeles (YouTube-Reset)
+    count    INTEGER NOT NULL DEFAULT 0   -- nur zur Info; maßgeblich sind Googles Fehlermeldungen
+);
 CREATE TABLE IF NOT EXISTS quota_usage (
     day      TEXT NOT NULL,      -- Datum in America/Los_Angeles (YouTube-Quota-Reset)
     units    INTEGER NOT NULL DEFAULT 0,
@@ -161,6 +165,10 @@ class Database:
         """Fehlende Spalten bei bestehenden Datenbanken ergänzen (nur additive Änderungen)."""
         wanted = {"topics": ("background_credit", "cost_json", "yt_visibility", "yt_checked_at", "yt_published_at"),
                   "job_runs": ("result_status", "result_summary")}
+        # Alte Einheiten-Zählung (1.600 je Upload) einmalig in Upload-Anzahl übernehmen
+        if not self._conn.execute("SELECT 1 FROM upload_counts LIMIT 1").fetchone():
+            self._conn.execute("INSERT OR IGNORE INTO upload_counts(day, count) "
+                               "SELECT day, units / 1600 FROM quota_usage WHERE units >= 1600")
         for table, columns in wanted.items():
             cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
             for col in columns:
@@ -306,11 +314,10 @@ class Database:
         return sum(total(r[0]) for r in rows)
 
     # --- Quota --------------------------------------------------------------
-    def quota_used(self, day: str) -> int:
-        row = self._conn.execute("SELECT units FROM quota_usage WHERE day=?", (day,)).fetchone()
+    def uploads_on(self, day: str) -> int:
+        row = self._conn.execute("SELECT count FROM upload_counts WHERE day=?", (day,)).fetchone()
         return int(row[0]) if row else 0
 
-    def add_quota(self, day: str, units: int) -> None:
-        self._conn.execute(
-            "INSERT INTO quota_usage(day,units) VALUES(?,?) "
-            "ON CONFLICT(day) DO UPDATE SET units=units+excluded.units", (day, units))
+    def count_upload(self, day: str) -> None:
+        self._conn.execute("INSERT INTO upload_counts(day,count) VALUES(?,1) "
+                           "ON CONFLICT(day) DO UPDATE SET count=count+1", (day,))

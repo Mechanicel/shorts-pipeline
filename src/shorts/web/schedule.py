@@ -97,7 +97,7 @@ class Scheduler:
                                       "zeitplan"], id="pipeline", misfire_grace_time=3600, coalesce=True)
         if s["upload"]["enabled"]:
             self._sched.add_job(self._launch, trigger_for(DAYS, s["upload"]["time"]),
-                                args=["upload", ["upload", "--channel", ch], "zeitplan"],
+                                args=["upload", ["upload", "--channel", ch, "--scheduled"], "zeitplan"],
                                 id="upload", misfire_grace_time=3600, coalesce=True)
         # Sichtbarkeit täglich abgleichen – nur lesend, daher unabhängig vom Zeitplan-Schalter
         self._sched.add_job(self._launch, trigger_for(DAYS, CHECK_TIME),

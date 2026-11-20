@@ -106,6 +106,13 @@ docker compose up -d bot
   `--sofort` (#622). #105 und ein Testvideo waren später „nicht verfügbar“ (vermutlich vom Betreiber gelöscht).
 - → `check-public` nach Terminen weiter beobachten; bei Sperren `UPLOAD_MODE=manual`. Audit trotzdem beantragen.
 
+**Kontingent (seit 20.11. abends):** videos.insert hat laut Google-Doku (Stand 12.11.2026) einen eigenen
+Topf von 100 Aufrufen/Tag (Console zeigte 6/100), nicht 1.600 von 10.000 Einheiten. Die App blockiert NICHT
+mehr vorab: Uploads werden versucht, `quotaExceeded`/`uploadLimitExceeded` stoppen den Batch und speichern
+eine Sperre bis Mitternacht PT (`upload_block` in app_settings; Timer-Läufe mit `--scheduled` pausieren und
+melden einmal, manuell geht weiter). Rate-Limits/5xx: 3 Versuche mit Backoff. Eigene Zählung
+(`upload_counts`, `YT_UPLOADS_PER_DAY`) nur zur Anzeige. Termin wird erst nach erfolgreichem Upload gespeichert.
+
 **Webinterface:** läuft (`docker compose up -d web`), Passwort legt der Betreiber beim ersten Aufruf fest.
 Zeitplan im Web ist aus, bis die systemd-Timer deaktiviert sind (braucht sudo vom Betreiber):
 `sudo systemctl disable --now shorts-pipeline.timer shorts-upload.timer`.

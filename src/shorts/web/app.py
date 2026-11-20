@@ -21,8 +21,8 @@ from ..costs import format_cost
 from ..db import Database, Status
 from ..script import word_count
 from ..review_bot import source_date_label
-from ..upload import (BERLIN, MIN_LEAD, STUDIO_URL, UPLOAD_COST, WOCHENTAGE, parse_publish_at, quota_status,
-                      upcoming_free_slots)
+from ..upload import (BERLIN, MIN_LEAD, STUDIO_URL, WOCHENTAGE, parse_publish_at, quota_reset,
+                      upcoming_free_slots, upload_status)
 from . import auth
 from .jobs import JobRunner, args_label, tail
 from .schedule import DAY_LABELS, DAYS, Scheduler, load_schedule, save_schedule
@@ -217,7 +217,7 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         now = datetime.now(timezone.utc)
         sched = load_schedule(d, channel)
         uploaded = d.recent_topics([Status.HOCHGELADEN, Status.PAKET], 15)
-        quota = quota_status(s, d, now)
+        uploads = upload_status(s, d, now)
         free_slots = upcoming_free_slots(sched["publish_slots"], d.taken_publish_slots(channel.key), now, 6)
         videos_30 = [t for t in d.recent_topics([Status.VIDEO, Status.WARTET, Status.FREIGEGEBEN, Status.PAKET,
                                                   Status.HOCHGELADEN], 200)
@@ -226,14 +226,12 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         avg_video = (sum(cost_total(t.cost_json) for t in videos_30) / len(videos_30)) if videos_30 else 0.0
         # Ob API-Uploads öffentlich werden, aus echten Prüfergebnissen ableiten (nicht behaupten)
         api_public = any(t.youtube_id and t.yt_visibility == "öffentlich" for t in uploaded)
-        upload_blocked = s.upload_mode == "api" and quota["possible"] <= 0
         return page(
             request, "dashboard.html", msg=msg, err=err,
             waiting=d.by_status(Status.VIDEO, channel.key) + d.by_status(Status.WARTET, channel.key),
             free_slots=free_slots, avg_video=avg_video,
             approved=d.by_status(Status.FREIGEGEBEN, channel.key),
-            uploaded=uploaded, quota=quota, api_public=api_public, upload_blocked=upload_blocked,
-            upload_cost=UPLOAD_COST, source_date_label=source_date_label,
+            uploaded=uploaded, uploads=uploads, api_public=api_public, source_date_label=source_date_label,
             failed=d.by_status(Status.FEHLER, channel.key),
             in_work=d.by_status(Status.SKRIPT, channel.key),
             counts=d.counts(channel.key), jobs=d.recent_jobs(10),
@@ -350,7 +348,8 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         rows = [(slot.split()[0].lower()[:3], slot.split()[1]) for slot in sched["publish_slots"]]
         rows += [("", "")] * 3  # leere Zeilen zum Hinzufügen
         return page(request, "settings.html", msg=msg, err=err, sched=sched, days=DAYS, day_labels=DAY_LABELS,
-                    next_runs=scheduler.next_runs(), preview=preview, balance=balance, slot_rows=rows)
+                    next_runs=scheduler.next_runs(), preview=preview, balance=balance, slot_rows=rows,
+                    reset_time=f"{quota_reset(now):%H:%M}")
 
     @app.get("/settings")
     def settings_form(request: Request, msg: str = "", err: str = ""):

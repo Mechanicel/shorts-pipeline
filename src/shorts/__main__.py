@@ -207,7 +207,7 @@ def cmd_upload(args, settings) -> int:
             raise ValueError("--sofort und --publish-at schließen sich aus")
         at = parse_publish_at(args.publish_at, datetime.now(timezone.utc)) if args.publish_at else None
         return run_uploads(settings, db, channel, dry_run=args.dry_run, publish_at=at, immediate=args.sofort,
-                           only=args.only)
+                           only=args.only, scheduled=args.scheduled)
     if args.publish_at or args.sofort:
         raise ValueError("--publish-at/--sofort gibt es nur im API-Modus (--mode api)")
     if settings.upload_mode == "manual":
@@ -242,6 +242,8 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--publish-at", metavar="'JJJJ-MM-TT HH:MM'",
                     help="Wunschtermin (Berliner Zeit) für das erste freigegebene Video, z. B. für einen Test")
     sp.add_argument("--only", type=int, metavar="ID", help="nur dieses freigegebene Thema hochladen")
+    sp.add_argument("--scheduled", action="store_true",
+                    help="Timer-Lauf: bei von Google gemeldeter Sperre bis zum Reset überspringen")
     sp.add_argument("--sofort", action="store_true",
                     help="alle Videos dieses Laufs sofort öffentlich hochladen (ohne Termin)")
     sp = add("check-public", cmd_check_public, "prüft von außen, ob hochgeladene Videos öffentlich sind")

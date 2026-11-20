@@ -35,11 +35,11 @@ def test_unerlaubter_uebergang(db: Database) -> None:
     assert db.get(tid).status == Status.NEU
 
 
-def test_quota_summiert(db: Database) -> None:
-    db.add_quota("2026-11-20", 1600)
-    db.add_quota("2026-11-20", 1600)
-    assert db.quota_used("2026-11-20") == 3200
-    assert db.quota_used("2026-11-21") == 0
+def test_upload_zaehlung(db: Database) -> None:
+    db.count_upload("2026-11-20")
+    db.count_upload("2026-11-20")
+    assert db.uploads_on("2026-11-20") == 2
+    assert db.uploads_on("2026-11-21") == 0
 
 
 # ---------------------------------------------------------------- sources

@@ -6,6 +6,7 @@ Pacific Time. Verbrauch wird in SQLite mitgezählt.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -18,7 +19,6 @@ log = logging.getLogger(__name__)
 
 BERLIN = ZoneInfo("Europe/Berlin")
 PACIFIC = ZoneInfo("America/Los_Angeles")
-UPLOAD_COST = 1600
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 MIN_LEAD = timedelta(hours=2)  # publishAt muss in der Zukunft liegen; etwas Puffer
 WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
@@ -138,15 +138,65 @@ def upload_video(youtube, path: str, body: dict) -> str:
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
     response = None
     while response is None:
-        status, response = request.next_chunk(num_retries=3)
+        status, response = request.next_chunk()  # Retries steuert upload_with_retry
         if status:
             log.info("Upload %d%%", int(status.progress() * 100))
     return response["id"]
 
 
-def _is_quota_error(exc: Exception) -> bool:
-    text = str(exc)
-    return "quotaExceeded" in text or "uploadLimitExceeded" in text or "dailyLimitExceeded" in text
+# ------------------------------------------------------------------ Google-Fehler auswerten
+STOP_REASONS = {
+    "quotaExceeded": "Google meldet quotaExceeded (Projekt-Kontingent erschöpft)",
+    "uploadLimitExceeded": "Google meldet uploadLimitExceeded (Upload-Limit des Kanals erreicht)",
+}
+RETRY_REASONS = {"rateLimitExceeded", "userRateLimitExceeded", "backendError", "internalError"}
+RETRY_ATTEMPTS = 3
+
+
+class UploadStopped(Exception):
+    """Kontingent/Upload-Limit: Batch sofort beenden, nicht wiederholen."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(STOP_REASONS.get(reason, reason))
+        self.reason = reason
+
+
+def http_error_reason(exc: Exception) -> tuple[str, int]:
+    """(reason, HTTP-Status) aus einem googleapiclient-HttpError (error.errors[0].reason)."""
+    import json as _json
+
+    status = int(getattr(getattr(exc, "resp", None), "status", 0) or 0)
+    reason = ""
+    try:
+        content = exc.content.decode() if isinstance(exc.content, bytes) else str(exc.content)
+        err = _json.loads(content).get("error", {})
+        reason = (err.get("errors") or [{}])[0].get("reason", "") or err.get("status", "")
+    except Exception:
+        pass
+    return reason, status
+
+
+def upload_with_retry(youtube, path: str, body: dict, sleep=time.sleep) -> str:
+    """Retry mit exponentiellem Backoff nur bei Rate-Limits, 5xx und Netzwerkfehlern."""
+    from googleapiclient.errors import HttpError
+
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            return upload_video(youtube, path, body)
+        except HttpError as exc:
+            reason, status = http_error_reason(exc)
+            if reason in STOP_REASONS:
+                raise UploadStopped(reason) from exc
+            retryable = reason in RETRY_REASONS or status >= 500
+            if not retryable or attempt == RETRY_ATTEMPTS:
+                raise
+            log.warning("Upload-Versuch %d fehlgeschlagen (%s %s) – neuer Versuch", attempt, status, reason)
+        except (ConnectionError, TimeoutError, OSError) as exc:
+            if attempt == RETRY_ATTEMPTS:
+                raise
+            log.warning("Upload-Versuch %d: Netzwerkfehler %s – neuer Versuch", attempt, type(exc).__name__)
+        sleep(2 ** attempt)  # 2 s, 4 s
+    raise RuntimeError("unreachable")
 
 
 def parse_publish_at(text: str, now: datetime) -> str:
@@ -158,35 +208,64 @@ def parse_publish_at(text: str, now: datetime) -> str:
 
 
 def quota_reset(now: datetime) -> datetime:
-    """Nächster Kontingent-Reset (Mitternacht Pacific Time) in Berliner Zeit."""
+    """Nächster YouTube-Reset: Mitternacht America/Los_Angeles (zoneinfo, sommerzeitfest), in Berliner Zeit."""
     pt = now.astimezone(PACIFIC)
     nxt = datetime(pt.year, pt.month, pt.day, tzinfo=PACIFIC) + timedelta(days=1)
     return nxt.astimezone(BERLIN)
 
 
-def quota_status(settings: Settings, db: Database, now: datetime) -> dict:
-    """Verbrauch heute, freie Einheiten, mögliche Uploads und Reset-Zeitpunkt (für CLI und Web)."""
-    used = db.quota_used(quota_day(now))
-    free = max(settings.youtube_daily_quota - used, 0)
-    by_quota = free // UPLOAD_COST
-    by_daily_limit = max(settings.youtube_max_uploads_per_day - used // UPLOAD_COST, 0)
+def _fmt(dt: datetime) -> str:
+    return f"{WOCHENTAGE[dt.weekday()]} {dt:%d.%m. %H:%M}"
+
+
+def active_block(db: Database, now: datetime) -> dict | None:
+    """Von Google gemeldete Sperre (quotaExceeded/uploadLimitExceeded), solange der Reset nicht erreicht ist."""
+    block = db.get_setting("upload_block")
+    if block and now < datetime.fromisoformat(block["until"]):
+        return block
+    return None
+
+
+def set_block(db: Database, reason: str, now: datetime) -> dict:
+    block = {"reason": reason, "reported_at": now.isoformat(), "until": quota_reset(now).isoformat(),
+             "notified_scheduled": False}
+    db.set_setting("upload_block", block)
+    return block
+
+
+def upload_status(settings: Settings, db: Database, now: datetime) -> dict:
+    """Nur zur Anzeige: eigene Upload-Zählung + Reset-Zeit + ggf. Googles Sperre. Blockiert nichts."""
     reset = quota_reset(now)
-    reset_txt = f"{WOCHENTAGE[reset.weekday()]} {reset:%d.%m. %H:%M}"
-    if by_daily_limit < by_quota:
-        reason = f"Tageslimit ({settings.youtube_max_uploads_per_day} Uploads), wieder ab {reset_txt}"
-    else:
-        reason = f"Kontingent ({used}/{settings.youtube_daily_quota}), wieder ab {reset_txt}"
-    return {"used": used, "limit": settings.youtube_daily_quota, "free": free,
-            "possible": max(min(by_quota, by_daily_limit), 0), "reset": reset_txt, "reason": reason}
+    block = active_block(db, now)
+    info = {"today": db.uploads_on(quota_day(now)), "limit": settings.yt_uploads_per_day,
+            "reset": _fmt(reset), "reset_time": f"{reset:%H:%M}", "block": None}
+    if block:
+        reported = datetime.fromisoformat(block["reported_at"]).astimezone(BERLIN)
+        until = datetime.fromisoformat(block["until"]).astimezone(BERLIN)
+        info["block"] = {"reason": block["reason"], "reported": f"{reported:%H:%M}", "until": f"{until:%H:%M}",
+                         "text": f"Google hat das Kontingent um {reported:%H:%M} gemeldet ({block['reason']}), "
+                                 f"Reset um {until:%H:%M}."}
+    return info
 
 
 def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry_run: bool = False,
                 now: datetime | None = None, publish_at: str | None = None, immediate: bool = False,
-                only: int | None = None) -> int:
-    """publish_at (UTC-ISO) gilt nur für das erste Video der Warteschlange (Test eines Wunschtermins).
-    immediate=True: alle Videos dieses Laufs sofort öffentlich, ohne Termin.
-    Meldet ehrlich, wie viele von wie vielen hochgeladen wurden (result.report)."""
+                only: int | None = None, scheduled: bool = False, sleep=time.sleep) -> int:
+    """Lädt freigegebene Videos hoch. Keine Vorab-Blockade: Uploads werden versucht, Googles Fehler entscheiden.
+
+    publish_at (UTC-ISO): Wunschtermin fürs erste Video · immediate: alle sofort öffentlich ·
+    only: nur dieses Thema · scheduled: Timer-Lauf (wird bei gemeldeter Sperre bis zum Reset übersprungen).
+    """
     now = now or datetime.now(timezone.utc)
+    if scheduled and (block := active_block(db, now)):
+        until = datetime.fromisoformat(block["until"]).astimezone(BERLIN)
+        summary = f"Übersprungen – Google hat {block['reason']} gemeldet, Reset {_fmt(until)}"
+        if not block.get("notified_scheduled"):
+            notify(settings, f"⏸ Upload [{channel.key}]: {summary}. Manuell im Webinterface weiterhin möglich.")
+            db.set_setting("upload_block", {**block, "notified_scheduled": True})
+        report(WARN, summary)
+        return 0
+
     pending = sorted(db.by_status(Status.FREIGEGEBEN, channel.key), key=lambda t: (t.updated_at, t.id))
     if only is not None:  # einzelnes Video (z. B. aus dem Webinterface mit eigenem Termin)
         pending = [t for t in pending if t.id == only]
@@ -196,22 +275,12 @@ def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry
         return 0
 
     day = quota_day(now)
-    q = quota_status(settings, db, now)
-    budget = q["possible"]
-    log.info("%d freigegeben, Quota heute %d/%d → max. %d Uploads", len(pending), q["used"], q["limit"], budget)
-    quota_hint = q["reason"]
-    if budget <= 0:
-        summary = f"0 von {plural(len(pending), 'Video', 'Videos')} hochgeladen – {quota_hint}"
-        if not dry_run:
-            notify(settings, f"⚠️ Upload [{channel.key}]: {summary}")
-        report(WARN, summary)
-        return 0
+    log.info("%d freigegeben · Uploads heute laut eigener Zählung: %d/%d (nur Info)",
+             len(pending), db.uploads_on(day), settings.yt_uploads_per_day)
     taken = db.taken_publish_slots(channel.key)
-
     youtube = None if dry_run else youtube_client(channel)
-    done, errors, quota_hit = [], [], False
-    for topic in pending[:budget]:
-        # Bereits zugewiesenen Slot (z. B. nach Retry) behalten, wenn er noch in der Zukunft liegt
+    done, errors, stopped = [], [], None
+    for topic in pending:
         slot = topic.publish_at
         if immediate:
             slot = None
@@ -219,47 +288,54 @@ def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry
             slot, publish_at = publish_at, None  # Wunschtermin nur für das erste Video
         elif not slot or datetime.fromisoformat(slot.replace("Z", "+00:00")) < now + MIN_LEAD:
             slot = next_free_slot(channel.publish_slots, taken, now)
-        if slot:
-            taken.add(slot)
         body = build_metadata(topic, channel, slot)
         if dry_run:
+            if slot:
+                taken.add(slot)
             print(f"[dry-run] #{topic.id} → {slot or 'sofort öffentlich'}  {body['snippet']['title']}")
             continue
-        db.update_fields(topic.id, publish_at=slot)  # sofort → kein Termin (kein Schein-Slot mehr)
         try:
-            video_id = upload_video(youtube, topic.video_path, body)
+            video_id = upload_with_retry(youtube, topic.video_path, body, sleep=sleep)
+        except UploadStopped as exc:
+            stopped = exc  # dieses + alle restlichen Videos bleiben unverändert "freigegeben"
+            set_block(db, exc.reason, now)
+            break
         except Exception as exc:
-            if _is_quota_error(exc):
-                db.add_quota(day, settings.youtube_daily_quota)  # Tag als verbraucht markieren
-                quota_hit = True
-                break
             log.exception("Upload #%s fehlgeschlagen", topic.id)
             db.transition(topic.id, Status.FEHLER, note=f"Upload: {type(exc).__name__}: {exc}"[:1000])
-            errors.append(f"#{topic.id}: {type(exc).__name__}: {exc}"[:300])
+            errors.append(f"#{topic.id}: {type(exc).__name__}: {str(exc)[:200]}")
             continue
-        db.add_quota(day, UPLOAD_COST)
+        if slot:
+            taken.add(slot)
+        db.count_upload(day)
         extra = {"yt_published_at": to_utc_iso(now)} if slot is None else {}
-        db.transition(topic.id, Status.HOCHGELADEN, youtube_id=video_id, **extra)
+        db.transition(topic.id, Status.HOCHGELADEN, youtube_id=video_id, publish_at=slot, **extra)
         print(f"Hochgeladen: #{topic.id} → Video-ID: {video_id}  https://youtu.be/{video_id}  "
               + ("(sofort öffentlich)" if slot is None else f"(privat, geplant {slot})"), flush=True)
         done.append(format_upload_line(topic, body["snippet"]["title"], video_id, slot))
 
     if dry_run:
-        report(OK, f"Dry-Run: {plural(min(budget, len(pending)), 'Video', 'Videos')} würden hochgeladen.")
+        report(OK, f"Dry-Run: {plural(len(pending), 'Video', 'Videos')} würden hochgeladen.")
         return 0
 
     n, total = len(done), len(pending)
     reasons = []
-    if quota_hit or (total - n - len(errors) > 0 and budget < total):
-        reasons.append(quota_hint)
+    reset_txt = f"{quota_reset(now):%H:%M}"
+    if stopped:
+        reasons.append(f"Google meldet {stopped.reason}, Reset {reset_txt}")
     if errors:
         reasons.append(plural(len(errors), "Fehler", "Fehler"))
     summary = f"{n} von {plural(total, 'Video', 'Videos')} hochgeladen" + (f" – {'; '.join(reasons)}" if reasons else "")
-    status = OK if n == total else (ERROR if n == 0 and errors else WARN)
+    status = OK if n == total else (ERROR if n == 0 and errors and not stopped else WARN)
 
     msg = f"📤 Upload [{channel.key}]: {summary}"
     if done:
         msg += "\n\n" + "\n\n".join(done)
+    if stopped:
+        still_open = len(db.by_status(Status.FREIGEGEBEN, channel.key))
+        msg += (f"\n\n⛔ Abbruch: {stopped}. {plural(still_open, 'Video bleibt', 'Videos bleiben')} freigegeben. "
+                f"Reset um {reset_txt} (Mitternacht Pacific Time); Timer-Uploads pausieren bis dahin, "
+                "manuell im Webinterface weiter möglich.")
     if errors:
         msg += "\n⚠️ " + "\n⚠️ ".join(errors)
     notify(settings, msg)
