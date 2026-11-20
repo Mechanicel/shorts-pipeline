@@ -98,6 +98,11 @@ docker compose up -d bot
 - [ ] Betreiber: `sudo bash deploy/install_timers.sh`; `token_de.json` per scp
 - [x] Hintergründe (generierte Animation, Pixabay-Anbindung) + Faktenkarten + Stimme +15 %; 37 Tests grün.
   Pixabay live getestet: Antwortformat passt, Cache/Drossel/Download-Limit greifen, Quellenangabe wird erfasst.
+- [x] Telegram-Buttons end-to-end getestet (#104 vom Betreiber abgelehnt, dann `regenerate` → `neu`,
+  wird beim nächsten Lauf bevorzugt mit Faktenkarten neu erzeugt).
+- [x] API-Projekt **nicht auditiert** → Uploads bleiben privat; Upload-Meldung enthält Studio-Link
+  (`https://studio.youtube.com/video/<id>/edit`). Offen: prüfen, ob gesperrte Videos sich in Studio überhaupt
+  umstellen lassen (vermutlich nicht → ggf. manueller Upload-Modus).
 - Lehre: Ein abgebrochener `docker compose run` läuft im Hintergrund weiter → parallele Läufe sind jetzt per
   `flock` auf `data/job.lock` gesperrt (pipeline + upload).
 - [ ] YouTube-API-Audit beantragen (sonst bleiben Uploads privat)

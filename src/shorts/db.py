@@ -38,7 +38,7 @@ ALLOWED: dict[Status, set[Status]] = {
     Status.FREIGEGEBEN: {Status.HOCHGELADEN, Status.FEHLER},
     Status.FEHLER: {Status.NEU, Status.SKRIPT, Status.VIDEO, Status.FREIGEGEBEN},  # Retry
     Status.HOCHGELADEN: set(),
-    Status.ABGELEHNT: set(),
+    Status.ABGELEHNT: {Status.NEU},  # nur per CLI 'regenerate': neues Skript + Video
     Status.VERWORFEN: set(),
 }
 
@@ -195,6 +195,12 @@ class Database:
             self.update_fields(topic_id, status=new, prev_status=topic.status, **fields)
         log.info("Thema %s: %s → %s", topic_id, topic.status, new)
         return self.get(topic_id)
+
+    def regenerate(self, topic_id: int) -> Topic:
+        """Thema mit frischem Skript/Video neu einreihen; Quelltext bleibt, Artefakte werden geleert."""
+        return self.transition(topic_id, Status.NEU, script_json=None, audio_path=None, video_path=None,
+                               note=None, telegram_message_id=None, publish_at=None,
+                               background_credit=None)
 
     def taken_publish_slots(self, channel: str) -> set[str]:
         rows = self._conn.execute(

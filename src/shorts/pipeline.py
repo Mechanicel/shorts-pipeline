@@ -77,7 +77,9 @@ class Pipeline:
     def step_script(self, report: RunReport) -> None:
         budget_calls = self.ch.max_new_topics_per_run
         target = self.ch.max_videos_per_run - len(self.db.by_status(Status.SKRIPT, self.ch.key))
-        for topic in self.db.by_status(Status.NEU, self.ch.key):
+        # Per 'regenerate' neu eingereihte Themen zuerst (prev_status gesetzt), dann neueste
+        queue = sorted(self.db.by_status(Status.NEU, self.ch.key), key=lambda t: t.prev_status is None)
+        for topic in queue:
             if budget_calls <= 0 or report.scripted >= target:
                 break
             budget_calls -= 1

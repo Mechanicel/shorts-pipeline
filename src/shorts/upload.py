@@ -81,6 +81,19 @@ def build_metadata(topic: Topic, channel: ChannelConfig, publish_at: str) -> dic
     }
 
 
+STUDIO_URL = "https://studio.youtube.com/video/{id}/edit"
+WOCHENTAGE = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
+
+
+def format_upload_line(topic: Topic, title: str, video_id: str, slot: str) -> str:
+    """Telegram-Zeile nach dem Upload. Solange das API-Projekt nicht auditiert ist, bleiben Uploads
+    privat → Studio-Link zum manuellen Veröffentlichen."""
+    local = datetime.fromisoformat(slot.replace("Z", "+00:00")).astimezone(BERLIN)
+    return (f"#{topic.id} {title}\n"
+            f"🔒 privat hochgeladen · geplanter Termin {WOCHENTAGE[local.weekday()]} {local:%d.%m. %H:%M}\n"
+            f"Studio: {STUDIO_URL.format(id=video_id)}")
+
+
 # ------------------------------------------------------------------ API
 def youtube_client(channel: ChannelConfig):
     from google.auth.transport.requests import Request
@@ -160,13 +173,14 @@ def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry
             continue
         db.add_quota(day, UPLOAD_COST)
         db.transition(topic.id, Status.HOCHGELADEN, youtube_id=video_id)
-        local = datetime.fromisoformat(slot.replace("Z", "+00:00")).astimezone(BERLIN)
-        done.append(f"#{topic.id} → {local:%a %d.%m. %H:%M} https://youtu.be/{video_id}")
+        done.append(format_upload_line(topic, body["snippet"]["title"], video_id, slot))
 
     if not dry_run and (done or errors):
-        msg = f"📤 Upload [{channel.key}]: {len(done)} eingeplant"
+        msg = f"📤 Upload [{channel.key}]: {len(done)} hochgeladen"
         if done:
-            msg += "\n" + "\n".join(done)
+            msg += "\n\n" + "\n\n".join(done)
+            msg += ("\n\nℹ️ API-Projekt noch nicht auditiert: Videos bleiben privat. "
+                    "Über den Studio-Link prüfen und von Hand veröffentlichen.")
         if errors:
             msg += "\n⚠️ " + "\n⚠️ ".join(errors)
         rest = len(pending) - len(done)

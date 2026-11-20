@@ -51,6 +51,7 @@ Status je Thema: `neu → skript → video → wartet_auf_freigabe → freigegeb
    Danach `token_de.json` und `client_secret.json` auf dem Laptop löschen bzw. sicher verwahren.
 
 > **API-Audit:** Uploads aus ungeprüften API-Projekten sperrt YouTube auf „privat“, auch mit `publishAt`.
+> Die Telegram-Meldung nach dem Upload enthält deshalb je Video einen YouTube-Studio-Link.
 > Für automatisches Veröffentlichen das [Audit-Formular](https://support.google.com/youtube/contact/yt_api_form)
 > einreichen; bis dahin im YouTube Studio manuell auf „Öffentlich“/„Geplant“ stellen.
 
@@ -85,6 +86,8 @@ Der Bot läuft per `restart: unless-stopped` dauerhaft (`docker compose up -d bo
 | `docker compose run --rm job pipeline --limit 1` | Testlauf mit genau einem Video |
 | `docker compose run --rm job upload [--dry-run]` | freigegebene Videos hochladen (`--dry-run`: nur Slot-Plan) |
 | `docker compose run --rm job retry <id>` | Thema im Status `fehler` erneut einreihen |
+| `docker compose run --rm job regenerate <id>` | Thema (wartend/abgelehnt/fehler) mit neuem Skript + Video neu einreihen |
+| `docker compose run --rm job auth-check` | YouTube-Token prüfen (erzwungener Refresh, keine Quota) |
 | `docker compose up -d bot` / `docker compose logs -f bot` | Review-Bot starten / Logs |
 | `docker compose run --rm --entrypoint python job -m pytest -q` | Tests |
 

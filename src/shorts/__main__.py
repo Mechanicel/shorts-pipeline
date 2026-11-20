@@ -109,6 +109,61 @@ def cmd_retry(args, settings) -> int:
     return 0
 
 
+def cmd_regenerate(args, settings) -> int:
+    """Thema (wartend/abgelehnt/fehler) mit neuem Skript + Video neu einreihen."""
+    db = _db(settings, False)
+    t = db.get(args.topic_id)
+    if t.status == Status.WARTET:
+        db.transition(t.id, Status.ABGELEHNT, note="abgelehnt zur Neuerzeugung")
+    elif t.status not in (Status.ABGELEHNT, Status.FEHLER):
+        print(f"Thema {t.id} ist im Status {t.status} – regenerate geht nur für wartend/abgelehnt/fehler.")
+        return 1
+    old_msg = t.telegram_message_id
+    db.regenerate(t.id)
+    if old_msg and settings.telegram_bot_token and settings.telegram_chat_id:
+        _retire_review_message(settings, old_msg, t.id)
+    print(f"Thema {t.id} → neu (wird beim nächsten Pipeline-Lauf bevorzugt neu erzeugt)")
+    return 0
+
+
+def _retire_review_message(settings, message_id: int, topic_id: int) -> None:
+    """Buttons der alten Review-Nachricht entfernen, damit niemand die veraltete Fassung freigibt."""
+    import httpx
+
+    base = f"https://api.telegram.org/bot{settings.telegram_bot_token}"
+    try:
+        httpx.post(f"{base}/editMessageReplyMarkup", timeout=15, json={
+            "chat_id": settings.telegram_chat_id, "message_id": message_id,
+            "reply_markup": {"inline_keyboard": []}})
+        httpx.post(f"{base}/sendMessage", timeout=15, json={
+            "chat_id": settings.telegram_chat_id, "reply_to_message_id": message_id,
+            "text": f"❌ #{topic_id} abgelehnt – wird beim nächsten Lauf neu erzeugt (neues Skript, Faktenkarten)."})
+    except Exception as exc:
+        log.warning("Alte Review-Nachricht nicht aktualisiert: %s", type(exc).__name__)
+
+
+def cmd_auth_check(args, settings) -> int:
+    """Prüft die YouTube-Token-Datei (Refresh, ohne Quota-Verbrauch)."""
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+
+    from .upload import SCOPES
+
+    path = get_channel(args.channel).youtube_token
+    if not path.exists():
+        print(f"{path} fehlt – auth_youtube.py auf dem Laptop ausführen und per scp kopieren.")
+        return 1
+    creds = Credentials.from_authorized_user_file(str(path), SCOPES)
+    if not creds.refresh_token:
+        print("Token ohne refresh_token – auth_youtube.py erneut ausführen.")
+        return 1
+    creds.refresh(Request())  # erzwungener Refresh: prüft Client + Refresh-Token gegen Google
+    path.write_text(creds.to_json(), encoding="utf-8")
+    path.chmod(0o600)
+    print(f"Token für Kanal {args.channel} gültig (Refresh ok, Scopes: {', '.join(creds.scopes or [])}).")
+    return 0
+
+
 def cmd_bot(args, settings) -> int:
     from .review_bot import run_bot
 
@@ -145,6 +200,9 @@ def main(argv: list[str] | None = None) -> int:
     add("status", cmd_status, "Anzahl Themen je Status", dry=True)
     add("upload", cmd_upload, "freigegebene Videos zu YouTube hochladen", dry=True)
     add("bot", cmd_bot, "Telegram-Review-Bot (dauerhaft)", channel=False)
+    sp = add("regenerate", cmd_regenerate, "Thema mit neuem Skript + Video neu einreihen", channel=False)
+    sp.add_argument("topic_id", type=int)
+    add("auth-check", cmd_auth_check, "YouTube-Token prüfen (ohne Quota)")
     sp = add("retry", cmd_retry, "Thema im Status 'fehler' erneut einreihen", channel=False)
     sp.add_argument("topic_id", type=int)
 

@@ -107,3 +107,34 @@ def test_review_text_enthaelt_quelle_belege_und_warnung() -> None:
     assert "Bisher lag die Frist bei 14 Tagen." in text
     assert "⚠️ Zitate nicht wörtlich" in text
     assert len(text) <= 4000
+
+
+# ------------------------------------------------------------------ regenerate / Upload-Meldung
+def test_regenerate_leert_artefakte_und_bevorzugt_thema() -> None:
+    from shorts.config import load_channels
+
+    db = Database(":memory:")
+    old = db.add_topic("de", "https://a.de/alt", "Q", "Alt", published_at="2026-01-01T00:00:00+00:00")
+    db.update_fields(old, source_text="Quelltext bleibt")
+    db.transition(old, Status.SKRIPT, script_json="{}")
+    for st in (Status.VIDEO, Status.WARTET, Status.ABGELEHNT):
+        db.transition(old, st)
+    db.update_fields(old, video_path="/x.mp4", telegram_message_id=5, background_credit="Video: Pixabay x")
+    t = db.regenerate(old)
+    assert t.status == Status.NEU and t.prev_status == Status.ABGELEHNT
+    assert (t.script_json, t.video_path, t.telegram_message_id, t.background_credit) == (None, None, None, None)
+    assert t.source_text == "Quelltext bleibt"
+    db.add_topic("de", "https://a.de/neu", "Q", "Neu", published_at="2026-11-20T00:00:00+00:00")
+    queue = sorted(db.by_status(Status.NEU, "de"), key=lambda x: x.prev_status is None)
+    assert queue[0].id == old  # trotz älterem Datum zuerst
+
+
+def test_upload_meldung_enthaelt_studio_link() -> None:
+    from shorts.upload import format_upload_line
+
+    db = Database(":memory:")
+    topic = db.get(_approved_topic(db, 9))
+    line = format_upload_line(topic, "Mein Titel", "abc123XYZ", "2026-11-23T16:00:00Z")
+    assert "https://studio.youtube.com/video/abc123XYZ/edit" in line
+    assert "privat" in line
+    assert "Mo 23.11. 17:00" in line  # 16:00 UTC = 17:00 MEZ, deutscher Wochentag
