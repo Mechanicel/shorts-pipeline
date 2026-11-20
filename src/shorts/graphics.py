@@ -78,6 +78,12 @@ def render_fact_card(value: str, label: str, date_label: str, out: Path, width: 
     return out
 
 
+def _same_info(value: str, date_label: str) -> bool:
+    norm = lambda s: " ".join(s.upper().replace(".", " ").split())  # noqa: E731
+    v, d = norm(value), norm(date_label)
+    return bool(v and d) and (v in d or d in v)
+
+
 def build_cards(key_facts: list[dict], date_label: str, out_dir: Path, speech_start: float,
                 speech_end: float) -> list[CardTiming]:
     """Eine Karte pro Kernzahl, gleichmäßig über die Sprechzeit verteilt (Reihenfolge = Sprechreihenfolge)."""
@@ -90,6 +96,8 @@ def build_cards(key_facts: list[dict], date_label: str, out_dir: Path, speech_st
     span = max(speech_end - speech_start, 1.0) / len(facts)
     cards = []
     for i, f in enumerate(facts):
-        path = render_fact_card(f["value"], f.get("label", ""), date_label, out_dir / f"card_{i}.png")
+        # Datums-Feld weglassen, wenn die Kernzahl das Datum schon zeigt ("BIS ENDE 2027" / "Ende 2027")
+        pill = "" if _same_info(f["value"], date_label) else date_label
+        path = render_fact_card(f["value"], f.get("label", ""), pill, out_dir / f"card_{i}.png")
         cards.append(CardTiming(path, speech_start + i * span, speech_start + (i + 1) * span))
     return cards

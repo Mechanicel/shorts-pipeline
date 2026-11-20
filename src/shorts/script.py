@@ -68,6 +68,9 @@ On-screen graphic (shown large in the foreground, so it must be exact):
 units exactly as in the source (e.g. "30 Tage", "4,2 %", "49 €"); label says in a few words what it is.
 - date_label: the effective date or deadline exactly as stated in the source, in capitals \
 (e.g. "AB 1. MÄRZ 2027", "BIS ENDE 2027"). Empty string if the source names none. Never guess a year.
+- Do not repeat the date_label as a key fact; key_facts are amounts, durations, percentages or counts. \
+If the date is the only number, give one key fact that names what happens (e.g. value "Pflicht", \
+label "für neue Smart-Geräte") or leave key_facts with the single date-free number that matters most.
 - Both follow rule 1: only what the source text states.
 """
 

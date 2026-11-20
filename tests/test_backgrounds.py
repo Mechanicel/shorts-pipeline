@@ -159,3 +159,13 @@ def test_tagfilter_verwirft_lockere_treffer() -> None:
     assert not matches_query({"tags": "ocean, waves, rocks, sand, coast"}, "kinetic sand")  # Strand
     assert matches_query({"tags": "kinetic sand, sand, cutting, asmr"}, "kinetic sand")
     assert matches_query({"tags": "light traces, traffic, highway, time lapse, timelapse"}, "traffic timelapse")
+
+
+def test_datum_wird_nicht_doppelt_gezeigt(tmp_path: Path) -> None:
+    from shorts.graphics import _same_info
+    assert _same_info("Ende 2027", "BIS ENDE 2027")
+    assert _same_info("1. März", "AB 1. MÄRZ")
+    assert not _same_info("30 Tage", "AB 1. MÄRZ")
+    with_pill = Image.open(build_cards([{"value": "30 Tage", "label": "x"}], "AB 1. MÄRZ", tmp_path, 0, 5)[0].path)
+    no_pill = Image.open(build_cards([{"value": "Ende 2027", "label": "x"}], "BIS ENDE 2027", tmp_path, 0, 5)[0].path)
+    assert no_pill.height < with_pill.height  # Karte ohne Datums-Feld ist niedriger
