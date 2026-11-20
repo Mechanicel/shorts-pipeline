@@ -30,21 +30,24 @@ eigenen Quellen → neuer Eintrag in `config/channels.yaml`, eigene `credentials
 | `config.py` | `.env` → `Settings`, `config/channels.yaml` → `ChannelConfig` (Quellen, Stimme, Slots, Limits) |
 | `db.py` | SQLite (`data/pipeline.sqlite3`, WAL) + Status-Maschine mit erlaubten Übergängen, Quota-Tabelle |
 | `sources.py` | RSS (feedparser) + HTML-Linklisten (Regex), URL-Normalisierung, Artikeltext via trafilatura |
-| `script.py` | Claude (`messages.parse` + Pydantic `ShortScript`, Modell/Effort aus `.env`, Refusal-Fallback). Validierung 70–110 Wörter, 1 Korrekturversuch. Belege (`evidence`) mit wörtlichen Zitaten → `unverified_quotes()` prüft gegen Quelltext |
+| `script.py` | Claude (`messages.parse` + Pydantic `ShortScript`, Modell/Effort aus `.env`; kein Refusal-Fallback – Ablehnung = Thema verworfen). Validierung 70–110 Wörter, 1 Korrekturversuch. Belege (`evidence`) mit wörtlichen Zitaten → `unverified_quotes()` prüft gegen Quelltext |
 | `tts.py` | `TTSEngine`-Protocol; `OpenAITTS`, `EspeakTTS` (Dry-Run). Piper/ElevenLabs: neue Klasse + `get_tts()` |
-| `subtitles.py` | Wort-Timings (Schätzung oder Whisper-Wortzeitstempel), Chunking, ASS-Datei (Titel, Untertitel mit gelbem aktivem Wort, Endkarte mit Quelle) |
+| `subtitles.py` | Wort-Timings (Standard: Whisper-Wortzeitstempel; `SUBTITLE_TIMING=estimate` als kostenlose Schätzung), Chunking, ASS-Datei (Titel, Untertitel mit gelbem aktivem Wort, Endkarte mit Quelle) |
 | `render.py` | ffmpeg: 1080x1920, Hintergrund aus `assets/backgrounds/` (Video/Bild, sonst Farbverlauf), ASS eingebrannt, loudnorm −14 LUFS |
 | `pipeline.py` | Orchestrierung collect → script → render, Fehler pro Thema → Status `fehler`, Zusammenfassung per Telegram |
 | `notify.py` | Telegram-`sendMessage` für Fehler/Status (no-op ohne Konfiguration) |
-| `review_bot.py` | *(Schritt 3)* Telegram-Bot: Video+Skript+Quelle+Belege, Buttons Freigeben/Ablehnen, nur `TELEGRAM_CHAT_ID` |
-| `upload.py` | *(Schritt 3)* YouTube Data API v3, privat + `publishAt` auf Slots verteilt, Quota-Tracking |
-| `__main__.py` | CLI: `pipeline [--dry-run]`, `collect`, `status`, `retry <id>`, `bot`, `upload [--dry-run]` |
+| `review_bot.py` | Telegram-Bot (python-telegram-bot, JobQueue pollt alle 60 s Status `video`): Video+Skript+Quelle+Belege, Buttons Freigeben/Ablehnen, nur `TELEGRAM_CHAT_ID` |
+| `upload.py` | YouTube Data API v3, privat + `publishAt` auf `publish_slots` (Berlin) verteilt, Quota je Pacific-Tag in SQLite, Token-Refresh schreibt `credentials/token_<key>.json` zurück |
+| `__main__.py` | CLI: `pipeline [--dry-run] [--limit N]`, `collect`, `status`, `retry <id>`, `bot`, `upload [--dry-run]` |
 
 Status: `neu → skript → video → wartet_auf_freigabe → freigegeben → hochgeladen`; Nebenwege `verworfen`
 (Claude/zu kurz/veraltet >21 Tage), `abgelehnt` (Betreiber), `fehler` (retrybar via `retry`).
 
 Dry-Run: eigene DB `data/dryrun.sqlite3` + `output/dryrun/`, wird pro Lauf zurückgesetzt; Beispieldaten in
 `sample_data.py` (fiktiv, Video mit „TESTVIDEO“-Badge); espeak statt OpenAI, kein Claude-Aufruf.
+
+Außerdem: `auth_youtube.py` (Repo-Root, läuft auf dem Laptop des Betreibers), `deploy/systemd/*` mit Platzhaltern
+`__USER__`/`__DIR__` (eingesetzt von `deploy/install_timers.sh`), `deploy/notify_failure.sh` (OnFailure → Telegram via curl).
 
 ## Befehle
 ```bash
@@ -64,7 +67,10 @@ docker compose up -d bot
 
 ## Stand (2026-11-20)
 - [x] Schritt 1: Infrastruktur (Docker, Gruppe, TZ, Projekt, git init, Dockerfile, Compose)
-- [x] Schritt 2: Dry-Run-Pipeline bis Testvideo, 16 Tests grün, echte Quellen abrufbar (103 Themen in `data/pipeline.sqlite3`)
-- [ ] Schritt 3: Telegram-Review-Bot, YouTube-Upload, `auth_youtube.py`, systemd-Timer (Pipeline So, Upload täglich)
-- [ ] Erster echter Lauf mit API-Keys (Prompt-Qualität prüfen, Kosten beobachten)
-- Offen/Ideen: eigene Hintergrundvideos in `assets/backgrounds/`, Piper als günstige TTS-Alternative, englischer Kanal.
+- [x] Schritt 2: Dry-Run-Pipeline bis Testvideo; echte Quellen abrufbar (103 Themen in `data/pipeline.sqlite3`)
+- [x] Erster Push auf `main` (öffentliches Repo); Refusal-Fallback entfernt, Whisper-Timing ist Standard
+- [x] Schritt 3 (Code): Review-Bot, Upload, `auth_youtube.py`, systemd-Units + Installer; 26 Tests grün
+- [ ] Betreiber: `.env` anlegen → echter Testlauf `pipeline --limit 1` (Prompt-Qualität, Kosten prüfen)
+- [ ] Betreiber: `sudo bash deploy/install_timers.sh`; Bot starten; `token_de.json` per scp
+- [ ] YouTube-API-Audit beantragen (sonst bleiben Uploads privat)
+- Offen/Ideen: eigene Hintergrundvideos in `assets/backgrounds/`, Piper als günstige TTS, englischer Kanal.

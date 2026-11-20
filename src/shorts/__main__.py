@@ -33,6 +33,9 @@ def cmd_pipeline(args, settings) -> int:
         for f in settings.data_dir.glob("dryrun.sqlite3*"):
             f.unlink()
     db = _db(settings, args.dry_run)
+    if args.limit:  # z. B. Testlauf mit genau einem Video; bis zu 4 Claude-Aufrufe je Video
+        channel = replace(channel, max_videos_per_run=args.limit,
+                          max_new_topics_per_run=min(channel.max_new_topics_per_run, args.limit * 4))
     report = Pipeline(settings, channel, db, dry_run=args.dry_run).run()
     for v in report.videos:
         print(f"Video: {v}")
@@ -98,7 +101,8 @@ def main(argv: list[str] | None = None) -> int:
         sp.set_defaults(fn=fn)
         return sp
 
-    add("pipeline", cmd_pipeline, "Quellen abrufen, Skripte schreiben, Videos rendern", dry=True)
+    sp = add("pipeline", cmd_pipeline, "Quellen abrufen, Skripte schreiben, Videos rendern", dry=True)
+    sp.add_argument("--limit", type=int, default=0, help="max. Anzahl Videos in diesem Lauf")
     add("collect", cmd_collect, "nur Quellen abrufen")
     add("status", cmd_status, "Anzahl Themen je Status", dry=True)
     add("upload", cmd_upload, "freigegebene Videos zu YouTube hochladen", dry=True)

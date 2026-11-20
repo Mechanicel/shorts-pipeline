@@ -1,0 +1,8 @@
+[Unit]
+Description=Telegram-Meldung bei Fehler von %i
+
+[Service]
+Type=oneshot
+User=__USER__
+WorkingDirectory=__DIR__
+ExecStart=__DIR__/deploy/notify_failure.sh %i

@@ -25,6 +25,54 @@ Status je Thema: `neu → skript → video → wartet_auf_freigabe → freigegeb
 5. **Hintergründe (optional):** Hochkant-Videos oder Bilder nach `assets/backgrounds/` legen
    (ohne Dateien wird ein animierter Farbverlauf genutzt).
 
+## YouTube-Zugang (einmalig)
+
+1. [Google Cloud Console](https://console.cloud.google.com/): Projekt anlegen, **YouTube Data API v3** aktivieren.
+2. **OAuth-Zustimmungsbildschirm:** Typ „Extern“, dann auf **„In Produktion“** stellen
+   (im Status „Testing“ verfällt das Refresh-Token nach 7 Tagen; die Warnung „nicht verifiziert“ beim Login ist für
+   die eigene Nutzung ok).
+3. **Anmeldedaten → OAuth-Client-ID → „Desktop-App“** → JSON herunterladen, als `client_secret.json` neben
+   `auth_youtube.py` auf dem Laptop speichern.
+4. Auf dem Laptop (PowerShell, Python installiert):
+   ```powershell
+   py -m pip install google-auth-oauthlib
+   py auth_youtube.py --channel de
+   ```
+   Im Browser anmelden und **den richtigen Kanal** (ggf. Brand-Account) wählen → `token_de.json`.
+5. Token auf den Server kopieren und absichern:
+   ```powershell
+   scp .\token_de.json <user>@<server-ip>:~/shorts-pipeline/credentials/
+   ```
+   ```bash
+   chmod 600 ~/shorts-pipeline/credentials/token_de.json
+   ```
+   Danach `token_de.json` und `client_secret.json` auf dem Laptop löschen bzw. sicher verwahren.
+
+> **API-Audit:** Uploads aus ungeprüften API-Projekten sperrt YouTube auf „privat“, auch mit `publishAt`.
+> Für automatisches Veröffentlichen das [Audit-Formular](https://support.google.com/youtube/contact/yt_api_form)
+> einreichen; bis dahin im YouTube Studio manuell auf „Öffentlich“/„Geplant“ stellen.
+
+## Telegram-Bot
+
+1. Bei [@BotFather](https://t.me/BotFather) `/newbot` → Token in `.env` (`TELEGRAM_BOT_TOKEN`).
+2. Eigene Chat-ID: Bot starten (`docker compose up -d bot`), dem Bot schreiben,
+   `docker compose logs bot | grep chat_id` → in `.env` (`TELEGRAM_CHAT_ID`), dann `docker compose up -d bot` erneut.
+3. Der Bot schickt neue Videos mit Skript, Quelle und Belegen; Buttons **Freigeben/Ablehnen**.
+   Er reagiert nur auf diese Chat-ID. `/status` zeigt die Themen je Status.
+
+## Zeitplan (systemd)
+
+`sudo bash deploy/install_timers.sh` installiert:
+
+| Timer | Zeit | Job |
+|---|---|---|
+| `shorts-pipeline.timer` | So 06:00 | `pipeline --channel de` |
+| `shorts-upload.timer` | täglich 09:30 (nach Quota-Reset 09:00 MEZ) | `upload --channel de` |
+
+Schlägt ein Job fehl (auch wenn Docker gar nicht startet), meldet `shorts-failure@.service` das per Telegram.
+Kontrolle: `systemctl list-timers 'shorts-*'`, Logs: `journalctl -u shorts-pipeline -e`.
+Der Bot läuft per `restart: unless-stopped` dauerhaft (`docker compose up -d bot`).
+
 ## Befehle
 
 | Befehl | Zweck |
@@ -32,7 +80,10 @@ Status je Thema: `neu → skript → video → wartet_auf_freigabe → freigegeb
 | `docker compose run --rm job pipeline [--channel de] [--dry-run]` | kompletter Wochenlauf |
 | `docker compose run --rm job collect` | nur Quellen abrufen |
 | `docker compose run --rm job status [--dry-run]` | Themen je Status |
+| `docker compose run --rm job pipeline --limit 1` | Testlauf mit genau einem Video |
+| `docker compose run --rm job upload [--dry-run]` | freigegebene Videos hochladen (`--dry-run`: nur Slot-Plan) |
 | `docker compose run --rm job retry <id>` | Thema im Status `fehler` erneut einreihen |
+| `docker compose up -d bot` / `docker compose logs -f bot` | Review-Bot starten / Logs |
 | `docker compose run --rm --entrypoint python job -m pytest -q` | Tests |
 
 ## Konfiguration
@@ -48,6 +99,7 @@ src/shorts/      Python-Paket (config, db, sources, script, tts, subtitles, rend
 config/          channels.yaml
 assets/          Hintergründe
 tests/           pytest
-deploy/          setup_host.sh, systemd-Units
+deploy/          setup_host.sh, install_timers.sh, notify_failure.sh, systemd-Units
+auth_youtube.py  einmalig auf dem Laptop: YouTube-OAuth-Token erzeugen
 data/ output/ credentials/   Laufzeitdaten – nicht im Git
 ```

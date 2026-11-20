@@ -56,7 +56,7 @@ class Settings:
     openai_api_key: str | None = field(default_factory=lambda: _env("OPENAI_API_KEY"))
     openai_tts_model: str = field(default_factory=lambda: _env("OPENAI_TTS_MODEL", "gpt-4o-mini-tts") or "")
     openai_tts_voice: str = field(default_factory=lambda: _env("OPENAI_TTS_VOICE", "nova") or "nova")
-    subtitle_timing: str = field(default_factory=lambda: _env("SUBTITLE_TIMING", "estimate") or "estimate")
+    subtitle_timing: str = field(default_factory=lambda: _env("SUBTITLE_TIMING", "whisper") or "whisper")
     telegram_bot_token: str | None = field(default_factory=lambda: _env("TELEGRAM_BOT_TOKEN"))
     telegram_chat_id: str | None = field(default_factory=lambda: _env("TELEGRAM_CHAT_ID"))
     youtube_max_uploads_per_day: int = field(

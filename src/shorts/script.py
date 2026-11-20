@@ -14,10 +14,6 @@ log = logging.getLogger(__name__)
 
 MIN_WORDS, MAX_WORDS = 70, 110
 
-# Modelle, die serverseitige Refusal-Fallbacks unterstützen
-_FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-fable-5-2", "claude-fable-5-1",
-                    "claude-sonnet-5-5"}
-
 
 class Evidence(BaseModel):
     claim: str = Field(description="Eine konkrete Aussage aus dem Sprechtext (Zahl, Datum, Regel).")
@@ -127,11 +123,8 @@ class ClaudeScriptWriter:
         )
         if self._effort:
             kwargs["output_config"] = {"effort": self._effort}
-        if self._model in _FALLBACK_MODELS:
-            response = self._client.beta.messages.parse(
-                betas=["server-side-fallback-2026-07-01"], fallbacks="default", **kwargs)
-        else:
-            response = self._client.messages.parse(**kwargs)
+        # Kein Refusal-Fallback (bewusst): eine Ablehnung verwirft das Thema.
+        response = self._client.messages.parse(**kwargs)
 
         log.info("Claude: model=%s stop=%s in=%s out=%s", response.model, response.stop_reason,
                  response.usage.input_tokens, response.usage.output_tokens)

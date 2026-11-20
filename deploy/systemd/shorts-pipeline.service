@@ -1,0 +1,14 @@
+[Unit]
+Description=Shorts-Pipeline: Quellen, Skripte, Videos (Kanal de)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+OnFailure=shorts-failure@%n.service
+
+[Service]
+Type=oneshot
+User=__USER__
+Group=docker
+WorkingDirectory=__DIR__
+ExecStart=/usr/bin/docker compose run --rm job pipeline --channel de
+TimeoutStartSec=3h
