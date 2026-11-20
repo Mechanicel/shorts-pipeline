@@ -111,35 +111,15 @@ def cmd_retry(args, settings) -> int:
 
 def cmd_regenerate(args, settings) -> int:
     """Thema (wartend/abgelehnt/fehler) mit neuem Skript + Video neu einreihen."""
-    db = _db(settings, False)
-    t = db.get(args.topic_id)
-    if t.status == Status.WARTET:
-        db.transition(t.id, Status.ABGELEHNT, note="abgelehnt zur Neuerzeugung")
-    elif t.status not in (Status.ABGELEHNT, Status.FEHLER):
-        print(f"Thema {t.id} ist im Status {t.status} – regenerate geht nur für wartend/abgelehnt/fehler.")
-        return 1
-    old_msg = t.telegram_message_id
-    db.regenerate(t.id)
-    if old_msg and settings.telegram_bot_token and settings.telegram_chat_id:
-        _retire_review_message(settings, old_msg, t.id)
-    print(f"Thema {t.id} → neu (wird beim nächsten Pipeline-Lauf bevorzugt neu erzeugt)")
-    return 0
+    from .actions import regenerate
 
-
-def _retire_review_message(settings, message_id: int, topic_id: int) -> None:
-    """Buttons der alten Review-Nachricht entfernen, damit niemand die veraltete Fassung freigibt."""
-    import httpx
-
-    base = f"https://api.telegram.org/bot{settings.telegram_bot_token}"
     try:
-        httpx.post(f"{base}/editMessageReplyMarkup", timeout=15, json={
-            "chat_id": settings.telegram_chat_id, "message_id": message_id,
-            "reply_markup": {"inline_keyboard": []}})
-        httpx.post(f"{base}/sendMessage", timeout=15, json={
-            "chat_id": settings.telegram_chat_id, "reply_to_message_id": message_id,
-            "text": f"❌ #{topic_id} abgelehnt – wird beim nächsten Lauf neu erzeugt (neues Skript, Faktenkarten)."})
-    except Exception as exc:
-        log.warning("Alte Review-Nachricht nicht aktualisiert: %s", type(exc).__name__)
+        regenerate(settings, _db(settings, False), args.topic_id)
+    except ValueError as exc:
+        print(exc)
+        return 1
+    print(f"Thema {args.topic_id} → neu (wird beim nächsten Pipeline-Lauf bevorzugt neu erzeugt)")
+    return 0
 
 
 def cmd_auth_check(args, settings) -> int:
@@ -170,6 +150,21 @@ def cmd_check_public(args, settings) -> int:
     return run_check(_db(settings, False), args.channel, args.id)
 
 
+def cmd_web(args, settings) -> int:
+    from .web.app import run_web
+
+    run_web(settings, port=args.port)
+    return 0
+
+
+def cmd_web_reset_password(args, settings) -> int:
+    db = _db(settings, False)
+    db.delete_setting("password_hash")
+    db.delete_setting("session_secret")
+    print("Passwort zurückgesetzt – beim nächsten Aufruf des Webinterface neues Passwort festlegen.")
+    return 0
+
+
 def cmd_bot(args, settings) -> int:
     from .review_bot import run_bot
 
@@ -180,6 +175,8 @@ def cmd_bot(args, settings) -> int:
 @_locked
 def cmd_upload(args, settings) -> int:
     db, channel = _db(settings, False), get_channel(args.channel)
+    from .web.schedule import load_schedule
+    channel = replace(channel, publish_slots=load_schedule(db, channel)["publish_slots"])  # Termine aus dem Web
     if args.mode:  # Kommandozeile schlägt .env (z. B. für einen gezielten API-Test)
         settings = replace(settings, upload_mode=args.mode)
     log.info("Upload-Modus: %s", settings.upload_mode)
@@ -229,6 +226,9 @@ def main(argv: list[str] | None = None) -> int:
     sp = add("check-public", cmd_check_public, "prüft von außen, ob hochgeladene Videos öffentlich sind")
     sp.add_argument("--id", action="append", default=[], help="zusätzliche YouTube-Video-ID")
     add("bot", cmd_bot, "Telegram-Review-Bot (dauerhaft)", channel=False)
+    sp = add("web", cmd_web, "Webinterface + Zeitplan (dauerhaft)", channel=False)
+    sp.add_argument("--port", type=int, default=8080)
+    add("web-reset-password", cmd_web_reset_password, "Webinterface-Passwort zurücksetzen", channel=False)
     sp = add("regenerate", cmd_regenerate, "Thema mit neuem Skript + Video neu einreihen", channel=False)
     sp.add_argument("topic_id", type=int)
     add("auth-check", cmd_auth_check, "YouTube-Token prüfen (ohne Quota)")

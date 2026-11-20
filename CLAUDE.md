@@ -41,6 +41,9 @@ eigenen Quellen → neuer Eintrag in `config/channels.yaml`, eigene `credentials
 | `review_bot.py` | Telegram-Bot (python-telegram-bot, JobQueue pollt alle 60 s Status `video`): Video+Skript+Quelle+Belege, Buttons Freigeben/Ablehnen, nur `TELEGRAM_CHAT_ID` |
 | `manual.py` | **Standard (`UPLOAD_MODE=manual`)**: Termin je freigegebenem Video (gleiche Slot-Logik), am Termin-Tag Upload-Paket an Telegram (MP4 als Dokument, Titel, Beschreibung inkl. Pixabay-Credit, Tags, Termin + Button `up:<id>`), Status `paket_gesendet` → Button → `hochgeladen` |
 | `upload.py` | YouTube Data API v3, privat + `publishAt` auf `publish_slots` (Berlin) verteilt, Quota je Pacific-Tag in SQLite, Token-Refresh schreibt `credentials/token_<key>.json` zurück |
+| `actions.py` | Freigeben/Ablehnen/`regenerate` für Bot, CLI und Web (entfernt alte Telegram-Buttons) |
+| `publiccheck.py` | `check-public`: Sichtbarkeit von außen (oEmbed + playabilityStatus) |
+| `web/` | Webinterface (FastAPI, Port 8080, Dienst `web`): Passwort beim ersten Start (scrypt, Tabelle `app_settings`), signierte Cookies, Login-Sperre; Übersicht/Freigabe/Upload/Logs; **Zeitplan** (APScheduler, `schedule_<kanal>` in `app_settings`, Standard aus) startet CLI-Jobs als Subprozess (`job_runs`-Tabelle, Logs in `data/logs/`) |
 | `__main__.py` | CLI: `pipeline [--dry-run] [--limit N]`, `collect`, `status`, `retry <id>`, `bot`, `upload [--dry-run]` |
 
 Status: `neu → skript → video → wartet_auf_freigabe → freigegeben → hochgeladen`; Nebenwege `verworfen`
@@ -98,18 +101,19 @@ docker compose up -d bot
 **Läuft:** Timer (Pipeline So 06:00, Upload täglich 09:30), Review-Bot (`docker compose up -d bot`),
 `UPLOAD_MODE=api`, `TTS_SPEED=1.25`, Pixabay aktiv. 57 Tests grün, pyflakes sauber.
 
-**YouTube ohne Audit – Beobachtungen:**
-- API-Upload + von Hand in Studio öffentlich → von außen abspielbar (#1 Frühstartrente, Aufrufe vorhanden).
-- #105 mit `publishAt` 17:00 war danach „nicht verfügbar“ – Ursache offen (gelöscht oder gesperrt?).
-- Testvideo `opEuZX4jC-I`: 13:02 öffentlich, 13:32 „nicht verfügbar“ (evtl. vom Betreiber gelöscht).
-- → `check-public` nach jedem Termin; bei gesperrten Videos `UPLOAD_MODE=manual`. Audit trotzdem beantragen.
-- `upload --sofort` (direkt öffentlich) ist eingebaut, ohne Audit noch unerprobt.
+**YouTube ohne Audit – Beobachtungen (20.11.):**
+- Funktioniert, von außen geprüft: von Hand veröffentlichen (#1), `publishAt` (#619, 19:30 → 19:31 öffentlich),
+  `--sofort` (#622). #105 und ein Testvideo waren später „nicht verfügbar“ (vermutlich vom Betreiber gelöscht).
+- → `check-public` nach Terminen weiter beobachten; bei Sperren `UPLOAD_MODE=manual`. Audit trotzdem beantragen.
+
+**Webinterface:** läuft (`docker compose up -d web`), Passwort legt der Betreiber beim ersten Aufruf fest.
+Zeitplan im Web ist aus, bis die systemd-Timer deaktiviert sind (braucht sudo vom Betreiber):
+`sudo systemctl disable --now shorts-pipeline.timer shorts-upload.timer`.
 
 **Offen / Ideen:**
 - Whisper-Abgleich per Sequenz-Alignment (Wortzahl weicht oft ab → derzeit Schätzung im Sprechfenster).
 - Untertitel zeigen Zahlen ausgeschrieben ("ZWEITAUSENDZWANZIG") – ggf. Ziffern anzeigen.
 - #104 (alte Fassung) wartet noch auf Freigabe → besser `regenerate 104`.
-- Webinterface (lokal, Passwort beim ersten Start) – vom Betreiber angefragt, noch nicht gebaut.
 - Englischer Kanal, Piper als günstige TTS, eigene Hintergrundclips.
 
 **Lehren:** Ein abgebrochener `docker compose run` läuft im Hintergrund weiter → `flock` auf `data/job.lock`.

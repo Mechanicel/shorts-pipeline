@@ -76,6 +76,20 @@ CREATE TABLE IF NOT EXISTS topics (
     UNIQUE(channel, url)
 );
 CREATE INDEX IF NOT EXISTS idx_topics_status ON topics(channel, status);
+CREATE TABLE IF NOT EXISTS app_settings (
+    key      TEXT PRIMARY KEY,
+    value    TEXT NOT NULL          -- JSON
+);
+CREATE TABLE IF NOT EXISTS job_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind        TEXT NOT NULL,      -- pipeline | upload | check-public | ...
+    args        TEXT NOT NULL,      -- JSON-Liste der CLI-Argumente
+    trigger     TEXT NOT NULL,      -- web | zeitplan
+    started_at  TEXT NOT NULL,
+    finished_at TEXT,
+    returncode  INTEGER,
+    log_path    TEXT
+);
 CREATE TABLE IF NOT EXISTS quota_usage (
     day      TEXT NOT NULL,      -- Datum in America/Los_Angeles (YouTube-Quota-Reset)
     units    INTEGER NOT NULL DEFAULT 0,
@@ -232,6 +246,50 @@ class Database:
     def purge_channel(self, channel: str) -> int:
         """Löscht alle Themen eines Kanals – nur für die separate Dry-Run-Datenbank gedacht."""
         return self._conn.execute("DELETE FROM topics WHERE channel=?", (channel,)).rowcount
+
+    # --- Einstellungen (Webinterface) --------------------------------------
+    def get_setting(self, key: str, default: Any = None) -> Any:
+        row = self._conn.execute("SELECT value FROM app_settings WHERE key=?", (key,)).fetchone()
+        return json.loads(row[0]) if row else default
+
+    def set_setting(self, key: str, value: Any) -> None:
+        self._conn.execute("INSERT INTO app_settings(key,value) VALUES(?,?) "
+                           "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, json.dumps(value)))
+
+    def delete_setting(self, key: str) -> None:
+        self._conn.execute("DELETE FROM app_settings WHERE key=?", (key,))
+
+    # --- Job-Verlauf ---------------------------------------------------------
+    def start_job(self, kind: str, args: list[str], trigger: str, log_path: str) -> int:
+        cur = self._conn.execute(
+            "INSERT INTO job_runs(kind,args,trigger,started_at,log_path) VALUES(?,?,?,?,?)",
+            (kind, json.dumps(args), trigger, _now(), log_path))
+        return int(cur.lastrowid)
+
+    def finish_job(self, job_id: int, returncode: int) -> None:
+        self._conn.execute("UPDATE job_runs SET finished_at=?, returncode=? WHERE id=?",
+                           (_now(), returncode, job_id))
+
+    def recent_jobs(self, limit: int = 15) -> list[dict[str, Any]]:
+        rows = self._conn.execute("SELECT * FROM job_runs ORDER BY id DESC LIMIT ?", (limit,))
+        return [dict(r) for r in rows]
+
+    def get_job(self, job_id: int) -> dict[str, Any] | None:
+        row = self._conn.execute("SELECT * FROM job_runs WHERE id=?", (job_id,)).fetchone()
+        return dict(row) if row else None
+
+    def recent_topics(self, statuses: list[Status], limit: int = 30) -> list[Topic]:
+        marks = ",".join("?" * len(statuses))
+        rows = self._conn.execute(
+            f"SELECT * FROM topics WHERE status IN ({marks}) ORDER BY updated_at DESC, id DESC LIMIT ?",
+            (*statuses, limit))
+        return [Topic.from_row(r) for r in rows]
+
+    def costs_since(self, iso: str) -> float:
+        from .costs import total
+        rows = self._conn.execute("SELECT cost_json FROM topics WHERE cost_json IS NOT NULL AND updated_at >= ?",
+                                  (iso,))
+        return sum(total(r[0]) for r in rows)
 
     # --- Quota --------------------------------------------------------------
     def quota_used(self, day: str) -> int:

@@ -26,7 +26,18 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
-  # Einmal-Jobs, gestartet via systemd-Timer:
+  # Dauerhaft: Webinterface (Heimnetz, Port 8080) inkl. Zeitplan für Erstellen/Upload
+  web:
+    <<: *common
+    command: ["web"]
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # Einmal-Jobs (von Hand, aus dem Webinterface oder – solange aktiv – von den systemd-Timern):
   #   docker compose run --rm job pipeline --channel de
   #   docker compose run --rm job upload
   job:

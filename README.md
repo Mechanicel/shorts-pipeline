@@ -18,6 +18,21 @@ Status je Thema: `neu → skript → video → wartet_auf_freigabe → freigegeb
 (daneben `verworfen`, `abgelehnt`, `fehler`; manueller Modus: `freigegeben → paket_gesendet → hochgeladen`).
 Fehler und Zusammenfassungen kommen per Telegram aufs Handy.
 
+## Webinterface
+
+Im Heimnetz unter **`http://<server-ip>:8080`** (Dienst `web`, startet mit Docker automatisch).
+Beim ersten Aufruf legst du ein Passwort fest (nur als scrypt-Hash gespeichert); danach Anmeldung,
+Sperre nach 5 Fehlversuchen. Passwort vergessen: `docker compose run --rm job web-reset-password`.
+
+- **Übersicht:** neue Videos erstellen (1–7), Videos ansehen mit Sprechtext, Belegen, Warnungen und Kosten,
+  Freigeben / Ablehnen / Neu erzeugen, freigegebene Videos hochladen (nächster Termin, Wunschtermin oder sofort),
+  Sichtbarkeit prüfen, zuletzt hochgeladene Videos mit YouTube-/Studio-Links, Job-Verlauf mit Logs, Kosten 7/30 Tage.
+- **Zeitplan & Einstellungen:** an welchen Wochentagen und um wie viel Uhr Videos erstellt werden, wie viele pro
+  Lauf, Upload-Uhrzeit, Veröffentlichungstermine, Passwort ändern.
+
+Der Zeitplan läuft im Web-Dienst (APScheduler) und ist anfangs **aus**. Solange die systemd-Timer (siehe unten)
+aktiv sind, nicht einschalten – sonst laufen Erstellen und Upload doppelt. Port 8080 nicht ins Internet freigeben.
+
 ## Ein Video von Hand erstellen und posten
 
 Alle Befehle im Projektordner:
@@ -53,6 +68,8 @@ Prüfen, ob die Videos für Zuschauer sichtbar sind (ohne Anmeldung): `docker co
 | `retry <id>` | Thema im Status `fehler` erneut einreihen |
 | `auth-check` | YouTube-Token prüfen (erzwungener Refresh, keine Quota) |
 | `bot` | Telegram-Review-Bot (läuft als Dienst, siehe unten) |
+| `web [--port 8080]` | Webinterface + Zeitplan (läuft als Dienst) |
+| `web-reset-password` | Webinterface-Passwort zurücksetzen |
 
 Jeweils als `docker compose run --rm job <befehl> [--channel de]`.
 Tests: `docker compose run --rm --entrypoint python job -m pytest -q`.
@@ -88,13 +105,13 @@ Tests: `docker compose run --rm --entrypoint python job -m pytest -q`.
 5. Prüfen: `docker compose run --rm job auth-check`
 
 > **API-Audit:** Laut Google-Hilfe (support.google.com/youtube/answer/7300965) werden Uploads aus ungeprüften
-> API-Projekten als privat gesperrt. In der Praxis ließen sich API-Uploads bisher in Studio veröffentlichen
-> und waren danach öffentlich abspielbar; ob geplante Veröffentlichungen (`publishAt`) zuverlässig greifen,
-> wird noch beobachtet (`check-public`). Für Dauerbetrieb das
+> API-Projekten als privat gesperrt. In der Praxis (Nov. 2026) funktionierten trotzdem: von Hand in Studio
+> veröffentlichen, geplante Veröffentlichung (`publishAt`) und `--sofort` – jeweils von außen geprüft
+> (`check-public`). Das kann sich ändern; für Dauerbetrieb das
 > [Audit](https://support.google.com/youtube/contact/yt_api_form) beantragen.
 > Fallback: `UPLOAD_MODE=manual` in `.env`.
 
-## Zeitplan (systemd)
+## Zeitplan (systemd – wird durch den Zeitplan im Webinterface ersetzt)
 
 | Timer | Zeit | Job |
 |---|---|---|
@@ -145,6 +162,8 @@ src/shorts/
   review_bot.py   Telegram-Freigabe
   upload.py       YouTube-Upload (API)
   manual.py       Upload-Pakete (manueller Modus)
+  actions.py      Freigeben/Ablehnen/Neu erzeugen (gemeinsam für Bot, CLI, Web)
+  web/            Webinterface: app.py (Routen), auth.py, schedule.py (Zeitplan), jobs.py, templates/
   publiccheck.py  Sichtbarkeitsprüfung von außen
   costs.py        Kostenberechnung
   notify.py       Telegram-Meldungen
