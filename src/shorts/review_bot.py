@@ -14,6 +14,7 @@ from telegram.ext import (Application, CallbackQueryHandler, CommandHandler, Con
 
 from .config import Settings
 from .db import Database, Status, Topic, TransitionError
+from .costs import format_cost
 from .notify import notify
 from .script import word_count
 
@@ -23,7 +24,7 @@ POLL_SECONDS = 60
 TG_TEXT_LIMIT = 4000
 
 
-def format_review(topic: Topic) -> str:
+def format_review(topic: Topic, eur_per_usd: float = 0.9) -> str:
     """Review-Text: alles, was für Faktencheck und Freigabe nötig ist."""
     s = topic.script or {}
     narration = s.get("narration", "")
@@ -44,6 +45,7 @@ def format_review(topic: Topic) -> str:
         lines.append(f"• {ev.get('claim', '')}\n  „{ev.get('quote', '')}“")
     if topic.note:
         lines += ["", f"⚠️ {topic.note}"]
+    lines += ["", f"💶 Kosten: {format_cost(topic.cost_json, eur_per_usd)}"]
     lines += ["", f"Beschreibung: {s.get('description', '')}",
               f"Hashtags: {' '.join(s.get('hashtags', []))}"]
     text = "\n".join(lines)
@@ -102,7 +104,7 @@ class ReviewBot:
                 caption=f"#{topic.id} {s.get('title', topic.title)}"[:1000],
                 read_timeout=120, write_timeout=120)
         msg = await context.bot.send_message(
-            chat_id=self.chat_id, text=format_review(topic), reply_markup=review_keyboard(topic.id),
+            chat_id=self.chat_id, text=format_review(topic, self.s.eur_per_usd), reply_markup=review_keyboard(topic.id),
             disable_web_page_preview=True)
         self.db.transition(topic.id, Status.WARTET, telegram_message_id=msg.message_id)
 

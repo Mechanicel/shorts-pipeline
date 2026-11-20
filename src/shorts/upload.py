@@ -131,8 +131,17 @@ def _is_quota_error(exc: Exception) -> bool:
     return "quotaExceeded" in text or "uploadLimitExceeded" in text or "dailyLimitExceeded" in text
 
 
+def parse_publish_at(text: str, now: datetime) -> str:
+    """'2026-11-20 20:30' (Berliner Zeit) → UTC-ISO; muss mind. 15 Minuten in der Zukunft liegen."""
+    local = datetime.strptime(text.strip(), "%Y-%m-%d %H:%M").replace(tzinfo=BERLIN)
+    if local < now + timedelta(minutes=15):
+        raise ValueError(f"--publish-at {text} liegt nicht mindestens 15 Minuten in der Zukunft")
+    return to_utc_iso(local)
+
+
 def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry_run: bool = False,
-                now: datetime | None = None) -> int:
+                now: datetime | None = None, publish_at: str | None = None) -> int:
+    """publish_at (UTC-ISO) gilt nur für das erste Video der Warteschlange (Test eines Wunschtermins)."""
     now = now or datetime.now(timezone.utc)
     pending = sorted(db.by_status(Status.FREIGEGEBEN, channel.key), key=lambda t: (t.updated_at, t.id))
     if not pending:
@@ -153,7 +162,9 @@ def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry
     for topic in pending[:max(budget, 0)]:
         # Bereits zugewiesenen Slot (z. B. nach Retry) behalten, wenn er noch in der Zukunft liegt
         slot = topic.publish_at
-        if not slot or datetime.fromisoformat(slot.replace("Z", "+00:00")) < now + MIN_LEAD:
+        if publish_at:
+            slot, publish_at = publish_at, None  # Wunschtermin nur für das erste Video
+        elif not slot or datetime.fromisoformat(slot.replace("Z", "+00:00")) < now + MIN_LEAD:
             slot = next_free_slot(channel.publish_slots, taken, now)
         taken.add(slot)
         body = build_metadata(topic, channel, slot)

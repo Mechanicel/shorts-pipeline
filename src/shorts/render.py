@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 
 VIDEO_EXT = {".mp4", ".mov", ".mkv", ".webm"}
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp"}
-TAIL_SECONDS = 2.8  # Endkarte nach der Sprachspur (Quelle + Outro), Untertitel enden vorher
+TAIL_SECONDS = 0.4  # nur ausklingen lassen; keine Endkarte → sauberer Loop (Quelle steht in der Beschreibung)
 FPS = 30
 
 
@@ -54,14 +54,18 @@ def _background_input(bg: Path | None) -> list[str]:
     return ["-stream_loop", "-1", "-i", str(bg.resolve())]
 
 
-def build_filter(cards: list[CardTiming], ass_name: str) -> str:
+def build_filter(cards: list[CardTiming], ass_name: str, total: float | None = None) -> str:
     """Hintergrund (auf 9:16 zugeschnitten, abgedunkelt, weich) → Faktenkarten → Untertitel."""
     parts = [f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps={FPS},"
              f"eq=brightness=-0.16:saturation=0.85,gblur=sigma=3[b0]"]
     for i, c in enumerate(cards):
         idx = 2 + i  # 0 = Hintergrund, 1 = Audio
-        parts.append(f"[{idx}:v]format=rgba,fade=t=in:st={c.start:.2f}:d={FADE}:alpha=1,"
-                     f"fade=t=out:st={max(c.end - FADE, c.start):.2f}:d={FADE}:alpha=1[c{i}]")
+        fades = []
+        if c.start > 0.01:  # erste Karte steht ab Frame 0 voll da
+            fades.append(f"fade=t=in:st={c.start:.2f}:d={FADE}:alpha=1")
+        if total is None or c.end < total - 0.05:  # letzte Karte bleibt bis zum Schluss (Loop)
+            fades.append(f"fade=t=out:st={max(c.end - FADE, c.start):.2f}:d={FADE}:alpha=1")
+        parts.append(f"[{idx}:v]format=rgba" + "".join("," + f for f in fades) + f"[c{i}]")
         parts.append(f"[b{i}][c{i}]overlay=x=(W-w)/2:y={CARD_Y}:shortest=0[b{i + 1}]")
     parts.append(f"[b{len(cards)}]subtitles=filename={ass_name}:fontsdir=/usr/share/fonts[v]")
     parts.append("[1:a]loudnorm=I=-14:TP=-1.5:LRA=11,apad[a]")
@@ -77,7 +81,7 @@ def build_ffmpeg_cmd(job: RenderJob, ass_path: Path, out_path: Path, total: floa
         *_background_input(job.background),
         "-i", str(job.audio.resolve()),
         *card_inputs,
-        "-filter_complex", build_filter(cards, ass_path.name),
+        "-filter_complex", build_filter(cards, ass_path.name, total),
         "-map", "[v]", "-map", "[a]",
         "-t", f"{total:.2f}",
         "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
@@ -94,13 +98,14 @@ def render(job: RenderJob) -> Path:
     total = round(speech + TAIL_SECONDS, 2)
     ass = build_ass(timings=job.timings, title=job.title, source_label=source_label(job.source_url),
                     outro=job.outro, total_duration=total, badge=job.badge,
-                    end_card_seconds=TAIL_SECONDS)
+                    end_card_seconds=0)
     ass_path = job.out_dir / "subs.ass"
     ass_path.write_text(ass, encoding="utf-8")
     out_path = (job.out_dir / "short.mp4").resolve()
     speech_start = job.timings[0].start if job.timings else 0.0
     speech_end = job.timings[-1].end if job.timings else speech
-    cards = build_cards(job.key_facts, job.date_label, job.out_dir, speech_start + 0.3, speech_end)
+    # Erste Karte ab Frame 0, letzte bis zum letzten Frame → Kernzahl sofort sichtbar, nahtloser Loop
+    cards = build_cards(job.key_facts, job.date_label, job.out_dir, 0.0, total)
     cmd = build_ffmpeg_cmd(job, ass_path, out_path, total, cards)
     log.info("Rendere %s (%.1fs, Hintergrund: %s)", out_path, total, job.background or "Verlauf")
     # cwd = out_dir, damit der subtitles-Filter den Dateinamen ohne Escaping findet

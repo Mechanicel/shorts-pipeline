@@ -9,10 +9,12 @@ from typing import Protocol
 from pydantic import BaseModel, Field
 
 from .config import ChannelConfig, Settings
+from .costs import claude_cost
 
 log = logging.getLogger(__name__)
 
-MIN_WORDS, MAX_WORDS = 70, 95  # bei TTS_SPEED 1.15 ≈ 32–43 s
+MIN_WORDS, MAX_WORDS = 60, 75  # bei TTS_SPEED 1.15 ≈ 25–35 s (Analytics: Ø 26 s gesehen)
+HOOK_MAX_WORDS = 8
 
 
 class Evidence(BaseModel):
@@ -54,13 +56,26 @@ news; the decisive facts (what/when/who) are missing or uncertain; the text is o
 quote is copied verbatim from the source text.
 
 Script shape (when not discarded):
-- The narration is {min_words}–{max_words} words. That is 30–45 seconds when spoken.
-- The first sentence is the hook: concrete, personal, max. 12 words, e.g. a direct question or \
-the most surprising concrete fact. No "In this video...".
+- The narration is {min_words}–{max_words} words (25–35 seconds spoken). Cut everything that is not essential.
+- The first sentence is the hook. Most viewers decide in the first second whether to swipe away, so:
+  * max. {hook_max} words,
+  * talks to the viewer as "du" (du/dein/dir/dich),
+  * names a concrete gain or loss for the viewer: money, a right, a deadline they could miss,
+  * does NOT open with a date or time phrase ("Ab dem 1. Januar ...", "2027 ...", "Seit heute ..."); \
+the date comes later in the script,
+  * no "In diesem Video", no question the source cannot answer.
+- The hook must be factually exact about the legal status: planned, proposed, decided by the cabinet, \
+passed by parliament and in force are different things. Never present a plan or draft as decided \
+or in force (e.g. "soll kommen" / "plant" instead of "kommt" when it is only planned). If the source \
+says "soll/sollen/kann/geplant", the hook keeps that meaning ("soll ... bekommen", "bekommt bald").
+- The hook must not promise more than the source: if only some people are affected (age, income, \
+birth year, region), it must not sound like everyone is (e.g. "Kinder ab sechs" or "viele Kinder", \
+not "dein Kind" when not every child qualifies). Short and exact beats catchy and wrong.
 - Then: what exactly changes, from when, who is affected, what to do. Short spoken sentences, \
 numbers written as people say them, no abbreviations the voice would stumble over, no emojis, \
 no URLs.
-- Close with one clear takeaway sentence. Do not ask for likes or subscriptions.
+- Close with one short takeaway sentence that leads naturally back to the hook (the video loops). \
+No outro, no "Quelle", no request for likes or subscriptions.
 - The title is factual and specific. overlay_title is a few punchy words for the screen.
 
 On-screen graphic (shown large in the foreground, so it must be exact):
@@ -103,12 +118,45 @@ def unverified_quotes(script: ShortScript, source_text: str) -> list[str]:
     return [e.quote for e in script.evidence if _norm(e.quote).strip('".') not in src]
 
 
+_NUMBER_WORDS = {
+    "null": "0", "eins": "1", "ein": "1", "eine": "1", "zwei": "2", "drei": "3", "vier": "4", "fünf": "5",
+    "sechs": "6", "sieben": "7", "acht": "8", "neun": "9", "zehn": "10", "elf": "11", "zwölf": "12",
+    "fünfzehn": "15", "zwanzig": "20", "dreißig": "30", "vierzig": "40", "fünfzig": "50", "sechzig": "60",
+    "hundert": "100", "tausend": "1000",
+}
+
+
 def unverified_numbers(script: ShortScript, source_text: str) -> list[str]:
-    """Zahlen aus Grafik (key_facts, date_label), die so nicht im Quelltext vorkommen."""
+    """Zahlen aus Grafik (key_facts, date_label), die so nicht im Quelltext vorkommen
+    (Ziffern oder einfache Zahlwörter wie 'zehn Euro')."""
     src_numbers = set(re.findall(r"\d+(?:[.,]\d+)?", source_text))
+    src_numbers |= {d for w, d in _NUMBER_WORDS.items() if re.search(rf"\b{w}\b", source_text, re.IGNORECASE)}
     shown = [f.value for f in script.key_facts] + ([script.date_label] if script.date_label else [])
     return [text for text in shown
             if any(n not in src_numbers for n in re.findall(r"\d+(?:[.,]\d+)?", text))]
+
+
+_DU = re.compile(r"\b(du|dein\w*|dir|dich)\b", re.IGNORECASE)
+_MONTHS = "januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember"
+_DATE_OPENING = re.compile(
+    rf"^\W*((ab|seit|zum|bis|vom|im|am)\s+(dem|der|den|ersten|\d|{_MONTHS}|nächst\w*|kommend\w*)"
+    rf"|\d|({_MONTHS})\b|heute\b|morgen\b)", re.IGNORECASE)
+
+
+def hook_of(narration: str) -> str:
+    return re.split(r"(?<=[.!?])\s+", narration.strip(), maxsplit=1)[0]
+
+
+def hook_problems(narration: str) -> list[str]:
+    hook = hook_of(narration)
+    problems = []
+    if word_count(hook) > HOOK_MAX_WORDS:
+        problems.append(f"Erster Satz hat {word_count(hook)} Wörter, max. {HOOK_MAX_WORDS}.")
+    if not _DU.search(hook):
+        problems.append("Erster Satz spricht nicht mit 'du' an.")
+    if _DATE_OPENING.match(hook):
+        problems.append("Erster Satz beginnt mit einer Datums-/Zeitangabe.")
+    return problems
 
 
 def validate_script(script: ShortScript) -> list[str]:
@@ -118,6 +166,7 @@ def validate_script(script: ShortScript) -> list[str]:
     n = word_count(script.narration)
     if not MIN_WORDS <= n <= MAX_WORDS:
         problems.append(f"Sprechtext hat {n} Wörter, erlaubt sind {MIN_WORDS}–{MAX_WORDS}.")
+    problems += hook_problems(script.narration)
     if len(script.title) > 100:
         problems.append("Titel länger als 100 Zeichen (YouTube-Limit).")
     if not script.evidence:
@@ -141,9 +190,10 @@ class ClaudeScriptWriter:
         self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key, max_retries=3)
         self._model = settings.anthropic_model
         self._effort = settings.anthropic_effort
+        self.spent: list[float | None] = []
         self._system = SYSTEM_PROMPT.format(
             channel_name=channel.name, locale=channel.locale_hint or channel.language,
-            language=channel.language, min_words=MIN_WORDS, max_words=MAX_WORDS)
+            language=channel.language, min_words=MIN_WORDS, max_words=MAX_WORDS, hook_max=HOOK_MAX_WORDS)
 
     def _call(self, user_content: str) -> ShortScript:
         kwargs: dict = dict(
@@ -160,6 +210,8 @@ class ClaudeScriptWriter:
 
         log.info("Claude: model=%s stop=%s in=%s out=%s", response.model, response.stop_reason,
                  response.usage.input_tokens, response.usage.output_tokens)
+        self.spent.append(claude_cost(response.model, response.usage.input_tokens,
+                                      response.usage.output_tokens))
         if response.stop_reason == "refusal":
             return ShortScript(discard=True, discard_reason="Modell hat die Anfrage abgelehnt.",
                                title="", overlay_title="", narration="", description="",
@@ -169,6 +221,7 @@ class ClaudeScriptWriter:
         return response.parsed_output
 
     def write(self, *, headline: str, url: str, source_name: str, text: str) -> ShortScript:
+        self.spent = []  # Kosten je API-Aufruf dieses Skripts (auch bei Fehlschlag auslesbar)
         user = USER_TEMPLATE.format(source_name=source_name, url=url, headline=headline, text=text)
         script = self._call(user)
         problems = validate_script(script)

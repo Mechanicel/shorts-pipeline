@@ -138,3 +138,20 @@ def test_upload_meldung_enthaelt_studio_link() -> None:
     assert "https://studio.youtube.com/video/abc123XYZ/edit" in line
     assert "geplant" in line
     assert "Mo 23.11. 17:00" in line  # 16:00 UTC = 17:00 MEZ, deutscher Wochentag
+
+
+def test_wunschtermin_berliner_zeit() -> None:
+    from shorts.upload import parse_publish_at
+    now = utc(2026, 11, 20, 18, 0)  # 19:00 Berlin
+    assert parse_publish_at("2026-11-20 20:30", now) == "2026-11-20T19:30:00Z"
+    with pytest.raises(ValueError):
+        parse_publish_at("2026-11-20 19:10", now)  # nur 10 Minuten Vorlauf
+
+
+def test_playability_parser() -> None:
+    from shorts.publiccheck import Visibility, parse_playability
+    assert parse_playability('x"playabilityStatus":{"status":"OK","x":1}') == ("OK", "")
+    assert parse_playability('"playabilityStatus":{"status":"LOGIN_REQUIRED","reason":"Privates Video"}') \
+        == ("LOGIN_REQUIRED", "Privates Video")
+    assert Visibility("a", 200, "OK", "").label == "öffentlich"
+    assert Visibility("a", 403, "ERROR", "Video nicht verfügbar").label == "nicht verfügbar"

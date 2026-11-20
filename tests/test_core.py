@@ -76,7 +76,7 @@ def _script(**over) -> ShortScript:
 
 def test_beispielskript_ist_gueltig() -> None:
     s = _script()
-    assert 70 <= word_count(s.narration) <= 110
+    assert 60 <= word_count(s.narration) <= 75
     assert validate_script(s) == []
 
 
@@ -133,3 +133,15 @@ def test_build_ass_enthaelt_titel_quelle_und_escaping() -> None:
     ass = build_ass(timings=t, title="Neu", source_label="bund.de", outro="", total_duration=5)
     assert "NEU" in ass and "Quelle: bund.de" in ass
     assert "(WELT)" in ass  # geschweifte Klammern dürfen keine ASS-Tags erzeugen
+
+
+def test_hook_regeln() -> None:
+    from shorts.script import hook_problems
+    assert hook_problems("Dein Rückgaberecht wird mehr als doppelt so lang. Rest.") == []
+    assert any("Wörter" in p for p in hook_problems(
+        "Du bekommst ab sofort deutlich mehr Zeit für jede einzelne Rücksendung. Rest."))
+    assert any("du" in p for p in hook_problems("Die Rente steigt um vier Prozent. Rest."))
+    for opening in ("Ab dem ersten Januar zahlst du mehr.", "2027 zahlst du mehr Beitrag.",
+                    "Zum 1. März sparst du Geld.", "Januar bringt dir mehr Geld."):
+        assert any("Datums" in p for p in hook_problems(opening + " Rest.")), opening
+    assert hook_problems("Abgeltungssteuer: Du sparst bald Geld. Rest.") == []  # 'Ab...' im Wort ist ok

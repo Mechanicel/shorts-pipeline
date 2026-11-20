@@ -91,6 +91,8 @@ Der Bot läuft per `restart: unless-stopped` dauerhaft (`docker compose up -d bo
 | `docker compose run --rm job upload [--dry-run]` | freigegebene Videos hochladen (`--dry-run`: nur Slot-Plan) |
 | `docker compose run --rm job retry <id>` | Thema im Status `fehler` erneut einreihen |
 | `docker compose run --rm job regenerate <id>` | Thema (wartend/abgelehnt/fehler) mit neuem Skript + Video neu einreihen |
+| `docker compose run --rm job upload --publish-at "2026-11-21 18:00"` | Wunschtermin (Berlin) fürs erste freigegebene Video (nur API-Modus) |
+| `docker compose run --rm job check-public` | prüft ohne Anmeldung, ob hochgeladene Videos öffentlich sind (und ob der Termin gegriffen hat) |
 | `docker compose run --rm job auth-check` | YouTube-Token prüfen (erzwungener Refresh, keine Quota) |
 | `docker compose up -d bot` / `docker compose logs -f bot` | Review-Bot starten / Logs |
 | `docker compose run --rm --entrypoint python job -m pytest -q` | Tests |

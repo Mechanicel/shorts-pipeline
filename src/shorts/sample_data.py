@@ -22,13 +22,12 @@ SAMPLE_SCRIPT = {
     "title": "TEST: 30 Tage Rückgabe statt 14 – was du wissen musst",
     "overlay_title": "30 Tage Rückgabe",
     "narration": (
-        "Du hast online bestellt und willst zurückschicken? Dann hast du bald mehr Zeit. "
-        "Ab dem ersten März gilt in unserem Beispielland eine Rücksendefrist von dreißig Tagen. "
-        "Bisher waren es nur vierzehn Tage. Die neue Regel gilt für alle Bestellungen, "
-        "die ab dem Stichtag aufgegeben werden. Und es wird noch besser: Liegt der Warenwert "
-        "über vierzig Euro, muss der Händler die Kosten für die Rücksendung tragen. "
-        "Wichtig für dich: Heb den Kaufbeleg auf, damit du die Frist im Zweifel nachweisen kannst. "
-        "Kurz gesagt: Mehr Zeit zum Zurückschicken, und ab vierzig Euro zahlst du das Porto nicht."
+        "Dein Rückgaberecht wird mehr als doppelt so lang. "
+        "In unserem Beispielland gilt ab dem ersten März eine Rücksendefrist von dreißig Tagen. "
+        "Bisher waren es nur vierzehn. Das gilt für alle Bestellungen ab dem Stichtag. "
+        "Liegt der Warenwert über vierzig Euro, zahlt der Händler das Porto. "
+        "Heb deinen Kaufbeleg auf, damit du die Frist nachweisen kannst. "
+        "Mehr Zeit zum Zurückschicken, und ab vierzig Euro kein Porto mehr."
     ),
     "description": "Testvideo der Pipeline mit fiktiven Beispieldaten. Kein echtes Gesetz.",
     "key_facts": [

@@ -70,6 +70,13 @@ docker compose up -d bot
 - Testmodus (`--dry-run`, Demo-Pakete) nutzt espeak → klingt absichtlich roboterhaft; beim Versenden immer dazuschreiben.
 - **Kein fremdes Gameplay** (urheberrechtlich geschützt). Erlaubt: eigene Aufnahmen, Pixabay, eigene Animation.
 
+## Retention-Regeln (aus ersten Analytics: 74 % wischen weg, Ø 26 von 47 s)
+- Hook: max. 8 Wörter, du-Ansprache, konkreter Nutzen/Verlust, keine Datums-Einleitung (`hook_problems()`),
+  Rechtsstatus exakt (soll/kann/geplant bleibt erhalten), nicht mehr Betroffene versprechen als die Quelle.
+- Skript 60–75 Wörter → 25–35 s. Erste Faktenkarte ab Frame 0, Titelbox klein ab 1,2 s, keine Endkarte
+  (Quelle nur in der Beschreibung), letzte Karte bis zum letzten Frame → sauberer Loop.
+- Kosten je Video in der Telegram-Review (`costs.py`): Claude exakt aus Tokens, TTS/Whisper geschätzt.
+
 ## Pixabay-Regeln (verbindlich)
 - Suchanfragen 24 h cachen (`search_*.json`), Videos herunterladen statt hotlinken, max. 100 Requests/Minute
   (Drossel 0,7 s), keine Massen-Downloads (max. 3 neue Clips pro Lauf, Pool max. 15).
@@ -110,6 +117,9 @@ docker compose up -d bot
 - [x] Timer installiert (Upload täglich 09:30, Pipeline So 06:00).
 - [x] Sichtbarkeitstest: API-Upload, in Studio auf öffentlich gestellt → von außen abspielbar (oEmbed 200, Status OK).
   Daher `UPLOAD_MODE=api` ab erstem echten Video; prüfen, ob `publishAt` ohne Audit automatisch live geht.
+- [x] Upload-Lage 20.11. abends: #1 (Frühstartrente, 7oM_nNX4E3k) per API hochgeladen und von Hand
+  öffentlich gestellt → von außen abspielbar, Aufrufe vorhanden. #105 (tE-6-GO0Ltg, publishAt 17:00) danach
+  „nicht verfügbar“ – Ursache offen (gelöscht oder gesperrt?). `check-public` prüft das jederzeit.
 - Lehre: Ein abgebrochener `docker compose run` läuft im Hintergrund weiter → parallele Läufe sind jetzt per
   `flock` auf `data/job.lock` gesperrt (pipeline + upload).
 - [ ] YouTube-API-Audit beantragen (sonst bleiben Uploads privat)

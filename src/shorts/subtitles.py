@@ -118,7 +118,7 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Caption,{FONT},104,&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,0,0,0,0,100,100,0,0,1,7,4,5,80,80,0,1
-Style: Title,{FONT_TITLE},84,&H00FFFFFF,&H00FFFFFF,&H00000000,&H003A1F0B,0,0,0,0,100,100,0,0,3,24,0,8,90,90,250,1
+Style: Title,{FONT_TITLE},56,&H00FFFFFF,&H00FFFFFF,&H00000000,&H003A1F0B,0,0,0,0,100,100,0,0,3,14,0,8,120,120,300,1
 Style: Source,{FONT_TITLE},54,&H00FFFFFF,&H00FFFFFF,&H00000000,&H003A1F0B,0,0,0,0,100,100,0,0,3,16,0,2,90,90,560,1
 Style: Outro,{FONT},64,&H003FD2FF,&H003FD2FF,&H00000000,&H96000000,0,0,0,0,100,100,0,0,1,6,3,5,90,90,0,1
 Style: Badge,{FONT_TITLE},40,&H00FFFFFF,&H00FFFFFF,&H00000000,&H000000C8,0,0,0,0,100,100,0,0,3,12,0,7,50,50,80,1
@@ -127,6 +127,7 @@ Style: Badge,{FONT_TITLE},40,&H00FFFFFF,&H00FFFFFF,&H00000000,&H000000C8,0,0,0,0
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
+TITLE_DELAY = 1.2  # Sekunden, bevor die Titelbox erscheint
 HIGHLIGHT = "&H003FD2FF&"  # Kanal-Gelb #FFD23F (ASS: BGR)
 
 
@@ -140,11 +141,13 @@ def build_ass(*, timings: list[WordTiming], title: str, source_label: str, outro
     end_card_start = max(total_duration - end_card_seconds, 0.0)
 
     # Titel: oben, das ganze Video über (mit kurzem Einblenden)
-    ev(0, total_duration, "Title", r"{\fad(250,0)}" + ass_escape(title.upper()), layer=1)
+    # Titel klein und erst nach TITLE_DELAY: Frame 0 gehört der Kernzahl
+    if total_duration > TITLE_DELAY:
+        ev(TITLE_DELAY, total_duration, "Title", r"{\fad(300,0)}" + ass_escape(title.upper()), layer=1)
 
     # Untertitel: Wortgruppen, aktives Wort gelb hervorgehoben, leichter Pop-Effekt pro Gruppe
     for chunk in chunk_words(timings):
-        chunk_end = min(chunk[-1].end, end_card_start) if outro else chunk[-1].end
+        chunk_end = min(chunk[-1].end, end_card_start) if (outro and end_card_seconds > 0) else chunk[-1].end
         if chunk[0].start >= chunk_end:
             continue
         for i, wt in enumerate(chunk):
@@ -158,9 +161,11 @@ def build_ass(*, timings: list[WordTiming], title: str, source_label: str, outro
             pop = r"{\fscx92\fscy92\t(0,80,\fscx100\fscy100)}" if i == 0 else ""
             ev(wt.start, seg_end, "Caption", r"{\pos(540,1290)}" + pop + " ".join(parts), layer=2)
 
-    # Endkarte: Quellenhinweis + Outro
-    ev(end_card_start, total_duration, "Source", r"{\fad(200,0)}" + ass_escape(f"Quelle: {source_label}"), layer=3)
-    if outro:
+    # Endkarte (optional): Quellenhinweis + Outro. Standard: keine – Quelle steht in der Beschreibung,
+    # das Video endet direkt nach dem letzten Wort und loopt sauber.
+    if end_card_seconds > 0:
+        ev(end_card_start, total_duration, "Source", r"{\fad(200,0)}" + ass_escape(f"Quelle: {source_label}"), layer=3)
+    if outro and end_card_seconds > 0:
         ev(end_card_start + 0.3, total_duration, "Outro", r"{\pos(540,1180)\fad(200,0)}" + ass_escape(outro), layer=3)
 
     if badge:

@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS topics (
     publish_at    TEXT,
     youtube_id    TEXT,
     background_credit TEXT,
+    cost_json     TEXT,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
     UNIQUE(channel, url)
@@ -107,6 +108,7 @@ class Topic:
     publish_at: str | None
     youtube_id: str | None
     background_credit: str | None
+    cost_json: str | None
     created_at: str
     updated_at: str
 
@@ -136,8 +138,9 @@ class Database:
     def _migrate(self) -> None:
         """Fehlende Spalten bei bestehenden Datenbanken ergänzen (nur additive Änderungen)."""
         cols = {r[1] for r in self._conn.execute("PRAGMA table_info(topics)")}
-        if "background_credit" not in cols:
-            self._conn.execute("ALTER TABLE topics ADD COLUMN background_credit TEXT")
+        for col in ("background_credit", "cost_json"):
+            if col not in cols:
+                self._conn.execute(f"ALTER TABLE topics ADD COLUMN {col} TEXT")
 
     def close(self) -> None:
         self._conn.close()
@@ -204,6 +207,13 @@ class Database:
         return self.transition(topic_id, Status.NEU, script_json=None, audio_path=None, video_path=None,
                                note=None, telegram_message_id=None, publish_at=None,
                                background_credit=None)
+
+    def add_cost(self, topic_id: int, part: str, usd: float | None) -> None:
+        """Kosten (USD) je Teil aufsummieren; bleibt auch bei regenerate erhalten (echte Ausgaben)."""
+        from .costs import add_part
+        with self.tx():
+            row = self._conn.execute("SELECT cost_json FROM topics WHERE id=?", (topic_id,)).fetchone()
+            self.update_fields(topic_id, cost_json=add_part(row[0], part, usd))
 
     def taken_publish_slots(self, channel: str) -> set[str]:
         rows = self._conn.execute(

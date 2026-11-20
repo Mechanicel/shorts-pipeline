@@ -169,3 +169,10 @@ def test_datum_wird_nicht_doppelt_gezeigt(tmp_path: Path) -> None:
     with_pill = Image.open(build_cards([{"value": "30 Tage", "label": "x"}], "AB 1. MÄRZ", tmp_path, 0, 5)[0].path)
     no_pill = Image.open(build_cards([{"value": "Ende 2027", "label": "x"}], "BIS ENDE 2027", tmp_path, 0, 5)[0].path)
     assert no_pill.height < with_pill.height  # Karte ohne Datums-Feld ist niedriger
+
+
+def test_zahlwoerter_zaehlen_als_beleg() -> None:
+    s = ShortScript.model_validate({**sample_data.SAMPLE_SCRIPT, "date_label": "",
+                                    "key_facts": [{"value": "10 €", "label": "pro Monat"}]})
+    assert unverified_numbers(s, "Kinder erhalten monatlich zehn Euro.") == []
+    assert unverified_numbers(s, "Kinder erhalten monatlich elf Euro.") == ["10 €"]
