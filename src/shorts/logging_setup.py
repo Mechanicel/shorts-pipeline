@@ -12,5 +12,6 @@ def setup_logging(level: str = "INFO") -> None:
         stream=sys.stdout,
         force=True,
     )
-    for noisy in ("httpx", "httpcore", "googleapiclient.discovery_cache", "telegram.ext"):
+    for noisy in ("httpx", "httpx2", "httpcore", "googleapiclient.discovery_cache", "telegram.ext",
+                  "apscheduler"):
         logging.getLogger(noisy).setLevel(logging.WARNING)

@@ -70,7 +70,14 @@ docker compose up -d bot
 - [x] Schritt 2: Dry-Run-Pipeline bis Testvideo; echte Quellen abrufbar (103 Themen in `data/pipeline.sqlite3`)
 - [x] Erster Push auf `main` (öffentliches Repo); Refusal-Fallback entfernt, Whisper-Timing ist Standard
 - [x] Schritt 3 (Code): Review-Bot, Upload, `auth_youtube.py`, systemd-Units + Installer; 26 Tests grün
-- [ ] Betreiber: `.env` anlegen → echter Testlauf `pipeline --limit 1` (Prompt-Qualität, Kosten prüfen)
-- [ ] Betreiber: `sudo bash deploy/install_timers.sh`; Bot starten; `token_de.json` per scp
+- [x] Echter Testlauf (#104 Cyber Resilience Act): Skript gut, alle 8 Belege wörtlich gefunden, per Bot zugestellt.
+  Bot läuft (`docker compose up -d bot`).
+- [ ] **Offen: Videolänge.** Stimme `nova` spricht ~1,9 Wörter/s → 103 Wörter = 57 s statt 30–45 s.
+  Entscheidung des Betreibers nötig (Wortbereich senken und/oder Tempo erhöhen).
+- [ ] Whisper-Abgleich: Wortanzahl weicht oft ab (Zahlwörter, Bindestriche) → derzeit Schätzung im Sprechfenster;
+  besser wäre Sequenz-Alignment (difflib) zwischen Skript- und Whisper-Wörtern.
+- [ ] Betreiber: `sudo bash deploy/install_timers.sh`; `token_de.json` per scp
+- Lehre: Ein abgebrochener `docker compose run` läuft im Hintergrund weiter → parallele Läufe sind jetzt per
+  `flock` auf `data/job.lock` gesperrt (pipeline + upload).
 - [ ] YouTube-API-Audit beantragen (sonst bleiben Uploads privat)
 - Offen/Ideen: eigene Hintergrundvideos in `assets/backgrounds/`, Piper als günstige TTS, englischer Kanal.

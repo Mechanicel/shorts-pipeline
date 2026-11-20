@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 import argparse
-import shutil
+import fcntl
 import logging
+import shutil
 import sys
 import traceback
+from contextlib import contextmanager
 from dataclasses import replace
+from pathlib import Path
+from typing import Iterator
 
 from .config import get_channel, load_settings
 from .db import Database, Status
@@ -22,6 +26,37 @@ def _db(settings, dry_run: bool) -> Database:
     return Database(settings.data_dir / name)
 
 
+@contextmanager
+def job_lock(settings, name: str = "job") -> Iterator[bool]:
+    """Exklusive Sperre über Container-Grenzen (data/ ist gemountet): verhindert, dass
+    Timer- und Handläufe gleichzeitig dieselben Themen bearbeiten. Liefert False, wenn belegt."""
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    with open(settings.data_dir / f"{name}.lock", "w") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def _locked(fn):
+    """Decorator: echter Lauf nur mit Sperre; ein zweiter gleichzeitiger Lauf beendet sich sauber."""
+    def wrapper(args, settings) -> int:
+        if getattr(args, "dry_run", False):
+            return fn(args, settings)
+        with job_lock(settings) as acquired:
+            if not acquired:
+                log.warning("Ein anderer Pipeline-/Upload-Lauf ist aktiv – breche ab, ohne etwas zu tun.")
+                return 0
+            return fn(args, settings)
+    return wrapper
+
+
+@_locked
 def cmd_pipeline(args, settings) -> int:
     from .pipeline import Pipeline
 
@@ -67,6 +102,8 @@ def cmd_retry(args, settings) -> int:
         return 1
     back = {"neu": Status.NEU, "skript": Status.SKRIPT, "video": Status.SKRIPT,
             "freigegeben": Status.FREIGEGEBEN}.get(t.prev_status or "neu", Status.NEU)
+    if t.prev_status == Status.VIDEO and t.video_path and Path(t.video_path).exists():
+        back = Status.VIDEO  # fertiges Video wiederverwenden, statt TTS/Render erneut zu bezahlen
     db.transition(t.id, back, note=None)
     print(f"Thema {t.id} → {back}")
     return 0
@@ -79,6 +116,7 @@ def cmd_bot(args, settings) -> int:
     return 0
 
 
+@_locked
 def cmd_upload(args, settings) -> int:
     from .upload import run_uploads
 

@@ -36,7 +36,7 @@ ALLOWED: dict[Status, set[Status]] = {
     Status.VIDEO: {Status.WARTET, Status.FEHLER},
     Status.WARTET: {Status.FREIGEGEBEN, Status.ABGELEHNT},
     Status.FREIGEGEBEN: {Status.HOCHGELADEN, Status.FEHLER},
-    Status.FEHLER: {Status.NEU, Status.SKRIPT, Status.FREIGEGEBEN},  # Retry
+    Status.FEHLER: {Status.NEU, Status.SKRIPT, Status.VIDEO, Status.FREIGEGEBEN},  # Retry
     Status.HOCHGELADEN: set(),
     Status.ABGELEHNT: set(),
     Status.VERWORFEN: set(),
