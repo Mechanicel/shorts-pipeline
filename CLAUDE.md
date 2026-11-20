@@ -30,6 +30,7 @@ eigenen Quellen → neuer Eintrag in `config/channels.yaml`, eigene `credentials
 | `config.py` | `.env` → `Settings`, `config/channels.yaml` → `ChannelConfig` (Quellen, Stimme, Slots, Limits) |
 | `db.py` | SQLite (`data/pipeline.sqlite3`, WAL) + Status-Maschine mit erlaubten Übergängen, Quota-Tabelle |
 | `sources.py` | RSS (feedparser) + HTML-Linklisten (Regex), URL-Normalisierung, Artikeltext via trafilatura |
+| `triage.py` | Vorauswahl vor dem teuren Modell: Vorfilter per `title_blocklist` (kostenlos), dann Claude Haiku 5.5 (`ANTHROPIC_TRIAGE_MODEL`, ein Aufruf für bis zu `TRIAGE_MAX`=30 Themen, nur Titel+Anriss, im Zweifel durchlassen). Ergebnis in Spalte `triage`; nur `ok`-Themen gehen an Opus |
 | `script.py` | Claude (`messages.parse` + Pydantic `ShortScript`, Modell/Effort aus `.env`; kein Refusal-Fallback – Ablehnung = Thema verworfen). Validierung 70–110 Wörter, 1 Korrekturversuch. Belege (`evidence`) mit wörtlichen Zitaten → `unverified_quotes()` prüft gegen Quelltext |
 | `tts.py` | `TTSEngine`-Protocol; `OpenAITTS`, `EspeakTTS` (Dry-Run). Piper/ElevenLabs: neue Klasse + `get_tts()` |
 | `subtitles.py` | Wort-Timings (Standard: Whisper-Wortzeitstempel; `SUBTITLE_TIMING=estimate` als kostenlose Schätzung), Chunking, ASS-Datei (Titel, Untertitel mit gelbem aktivem Wort, Endkarte mit Quelle) |
@@ -105,6 +106,10 @@ docker compose up -d bot
 - Funktioniert, von außen geprüft: von Hand veröffentlichen (#1), `publishAt` (#619, 19:30 → 19:31 öffentlich),
   `--sofort` (#622). #105 und ein Testvideo waren später „nicht verfügbar“ (vermutlich vom Betreiber gelöscht).
 - → `check-public` nach Terminen weiter beobachten; bei Sperren `UPLOAD_MODE=manual`. Audit trotzdem beantragen.
+
+**Themenauswahl (seit 20.11. abends):** Ablauf Vorfilter → Haiku-Vorauswahl → Datumsprüfung → Opus-Skript.
+Probelauf: 30 Themen für 0,12 Cent, 19 durchgelassen. Leere Läufe melden „Kein Video: N Themen geprüft und
+verworfen (2× Vorfilter, …)“ plus Begründungen im Job-Log.
 
 **Kontingent (seit 20.11. abends):** videos.insert hat laut Google-Doku (Stand 12.11.2026) einen eigenen
 Topf von 100 Aufrufen/Tag (Console zeigte 6/100), nicht 1.600 von 10.000 Einheiten. Die App blockiert NICHT

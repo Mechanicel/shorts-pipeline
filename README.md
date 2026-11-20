@@ -125,6 +125,8 @@ Der Bot läuft per `restart: unless-stopped` dauerhaft (`docker compose up -d bo
 
 ## Videos: Inhalt und Gestaltung
 
+- **Themenauswahl:** Vorfilter (Titel-Begriffe in `channels.yaml`, kostenlos) → Vorauswahl mit Claude Haiku
+  (nur Titel + Anriss, Bruchteile eines Cents) → Datumsprüfung → erst dann das Skript mit Opus.
 - **Skript:** 60–75 Wörter. Erster Satz max. 8 Wörter, du-Ansprache, konkreter Nutzen/Verlust, keine
   Datums-Einleitung, Rechtsstatus exakt (geplant ≠ beschlossen). Jede Zahl braucht ein wörtliches Zitat aus
   der Quelle; der Code prüft Zitate und Grafik-Zahlen automatisch und warnt in Telegram.

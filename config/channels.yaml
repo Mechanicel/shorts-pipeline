@@ -41,6 +41,26 @@ channels:
       - abstract
       - roller coaster
       - drone city
+    # Vorfilter (kostenlos): Titel mit diesen Begriffen sind fast nie Verbraucherthemen → vor Claude verworfen.
+    title_blocklist:
+      - gratuliert
+      - kondoliert
+      - Glückwunsch
+      - empfängt
+      - Treffen mit
+      - trifft
+      - telefoniert
+      - Telefonat
+      - Reise nach
+      - reist nach
+      - besucht
+      - Antrittsbesuch
+      - Staatsbesuch
+      - Tagung
+      - Konferenz
+      - Rede von
+      - würdigt
+      - Gedenken
     sources:
       - name: Bundesregierung – Artikel
         type: rss

@@ -41,6 +41,7 @@ class ChannelConfig:
     publish_slots: list[str]
     sources: list[SourceConfig]
     background_queries: list[str] = field(default_factory=list)
+    title_blocklist: list[str] = field(default_factory=list)
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -53,6 +54,9 @@ class Settings:
     anthropic_api_key: str | None = field(default_factory=lambda: _env("ANTHROPIC_API_KEY"))
     anthropic_model: str = field(default_factory=lambda: _env("ANTHROPIC_MODEL", "claude-opus-5-5") or "")
     anthropic_effort: str = field(default_factory=lambda: _env("ANTHROPIC_EFFORT", "high") or "high")
+    anthropic_triage_model: str = field(
+        default_factory=lambda: _env("ANTHROPIC_TRIAGE_MODEL", "claude-haiku-5-5") or "claude-haiku-5-5")
+    triage_max: int = field(default_factory=lambda: int(_env("TRIAGE_MAX", "30") or 30))
     tts_provider: str = field(default_factory=lambda: _env("TTS_PROVIDER", "openai") or "openai")
     openai_api_key: str | None = field(default_factory=lambda: _env("OPENAI_API_KEY"))
     openai_tts_model: str = field(default_factory=lambda: _env("OPENAI_TTS_MODEL", "gpt-4o-mini-tts") or "")
@@ -108,6 +112,7 @@ def load_channels(path: Path | None = None) -> dict[str, ChannelConfig]:
             publish_slots=list(c.get("publish_slots", [])),
             sources=[SourceConfig(**s) for s in c.get("sources", [])],
             background_queries=list(c.get("background_queries", [])),
+            title_blocklist=list(c.get("title_blocklist", [])),
         )
     return channels
 

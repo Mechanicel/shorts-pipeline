@@ -82,7 +82,8 @@ def test_quellen_alter() -> None:
 def test_pipeline_ergebnis() -> None:
     assert RunReport(rendered=1).result()[0] == "ok"
     st, text = RunReport(rendered=0, discarded=2, discard_reasons=["zu alt", "zu alt"]).result()
-    assert st == "warn" and "2× zu alt" in text and "keine neuen Videos" in text
+    assert st == "warn" and text == "Kein Video: 2 Themen geprüft und verworfen (2× zu alt)."
+    assert "keine offenen Themen" in RunReport().result()[1]
     assert RunReport(rendered=0, errors=["x"]).result()[0] == "error"
 
 

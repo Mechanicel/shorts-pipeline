@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS topics (
     yt_visibility TEXT,              -- öffentlich | privat | gelöscht (von außen geprüft)
     yt_checked_at TEXT,
     yt_published_at TEXT,            -- tatsächlicher Veröffentlichungszeitpunkt laut YouTube
+    triage        TEXT,              -- Ergebnis der Vorauswahl (Begründung), NULL = noch nicht geprüft
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
     UNIQUE(channel, url)
@@ -135,6 +136,7 @@ class Topic:
     yt_visibility: str | None
     yt_checked_at: str | None
     yt_published_at: str | None
+    triage: str | None
     created_at: str
     updated_at: str
 
@@ -163,7 +165,8 @@ class Database:
 
     def _migrate(self) -> None:
         """Fehlende Spalten bei bestehenden Datenbanken ergänzen (nur additive Änderungen)."""
-        wanted = {"topics": ("background_credit", "cost_json", "yt_visibility", "yt_checked_at", "yt_published_at"),
+        wanted = {"topics": ("background_credit", "cost_json", "yt_visibility", "yt_checked_at", "yt_published_at",
+                             "triage"),
                   "job_runs": ("result_status", "result_summary")}
         # Alte Einheiten-Zählung (1.600 je Upload) einmalig in Upload-Anzahl übernehmen
         if not self._conn.execute("SELECT 1 FROM upload_counts LIMIT 1").fetchone():

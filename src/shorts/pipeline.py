@@ -19,6 +19,7 @@ from .script import (ClaudeScriptWriter, SampleScriptWriter, ScriptWriter, scrip
                      unverified_numbers, unverified_quotes)
 from .result import ERROR, OK, WARN, plural, report as report_result
 from .sources import collect_topics, fetch_article
+from .triage import Candidate, HaikuTriage, PassAllTriage, Triage, prefilter_reason
 from .subtitles import estimate_timings, split_words, whisper_timings
 from .tts import TTSEngine, apply_speed, get_tts
 
@@ -50,17 +51,23 @@ class RunReport:
     cost_usd: float = 0.0
     eur_per_usd: float = 0.9
     discard_reasons: list[str] = field(default_factory=list)
+    discard_examples: list[str] = field(default_factory=list)
+    checked: int = 0  # Themen, die das Skript-Modell bekommen hat
 
     def result(self) -> tuple[str, str]:
         """(Status, Zusammenfassung) für result.report – ✅ nur, wenn Videos entstanden sind."""
         from collections import Counter
         why = ", ".join(f"{n}× {r}" for r, n in Counter(self.discard_reasons).items())
+        if not self.rendered and not self.errors:
+            if not self.discarded and not self.checked:
+                return WARN, "Kein Video: keine offenen Themen – neue Meldungen der Quellen abwarten."
+            return WARN, f"Kein Video: {plural(self.discarded, 'Thema', 'Themen')} geprüft und verworfen ({why})."
         text = (f"{plural(self.rendered, 'Video', 'Videos')} erstellt, {self.discarded} verworfen"
                 + (f" ({why})" if why else "") + f", {plural(len(self.errors), 'Fehler', 'Fehler')}")
         if self.rendered and not self.errors:
             return OK, text
-        if self.rendered or not self.errors:
-            return WARN, text + ("" if self.rendered else " – keine neuen Videos")
+        if self.rendered:
+            return WARN, text
         return ERROR, text
 
     def summary(self, channel: str) -> str:
@@ -77,7 +84,7 @@ class RunReport:
 class Pipeline:
     def __init__(self, settings: Settings, channel: ChannelConfig, db: Database, *,
                  dry_run: bool = False, writer: ScriptWriter | None = None,
-                 tts: TTSEngine | None = None) -> None:
+                 tts: TTSEngine | None = None, triage: Triage | None = None) -> None:
         self.s = settings
         self.ch = channel
         self.db = db
@@ -86,6 +93,7 @@ class Pipeline:
                                  else ClaudeScriptWriter(settings, channel))
         self.tts = tts or get_tts(settings, channel, dry_run=dry_run)
         self._run_cost = 0.0
+        self.triage = triage or (PassAllTriage() if dry_run else HaikuTriage(settings, channel))
 
     # ------------------------------------------------------------------ steps
     def step_collect(self, report: RunReport) -> None:
@@ -107,15 +115,59 @@ class Pipeline:
             if t.created_at < cutoff:
                 self.db.transition(t.id, Status.VERWORFEN, note="veraltet")
 
+    def _discard(self, topic: Topic, report: RunReport, category: str, note: str) -> None:
+        self.db.transition(topic.id, Status.VERWORFEN, note=note)
+        log.info("Thema %s verworfen (%s): %s", topic.id, category, note)
+        report.discarded += 1
+        report.discard_reasons.append(category)
+        report.discard_examples.append(f"#{topic.id} {topic.title[:60]} – {note}")
+
     def step_script(self, report: RunReport) -> None:
-        budget_calls = self.ch.max_new_topics_per_run
         target = self.ch.max_videos_per_run - len(self.db.by_status(Status.SKRIPT, self.ch.key))
-        # Per 'regenerate' neu eingereihte Themen zuerst (prev_status gesetzt), dann neueste
+        if target <= 0:
+            return
+        # Per 'regenerate' neu eingereihte Themen zuerst (prev_status gesetzt) – sie überspringen Filter/Vorauswahl
         queue = sorted(self.db.by_status(Status.NEU, self.ch.key), key=lambda t: t.prev_status is None)
-        for topic in queue:
+
+        # Stufe 1: Vorfilter (kostenlos)
+        kept: list[Topic] = []
+        for t in queue:
+            term = None if t.prev_status else prefilter_reason(t.title, self.ch.title_blocklist)
+            if term:
+                self._discard(t, report, "Vorfilter (Diplomatie/Termine)", f"Vorfilter: Titel enthält „{term}“")
+            else:
+                kept.append(t)
+
+        # Stufe 2: Vorauswahl mit günstigem Modell (nur Titel + Anriss, ein Aufruf)
+        to_screen = [t for t in kept if t.triage is None and not t.prev_status][: self.s.triage_max]
+        if to_screen:
+            try:
+                verdicts = self.triage.screen([Candidate(t.id, t.title, t.summary or "") for t in to_screen])
+            except Exception as exc:  # Vorauswahl ist eine Sparmaßnahme – bei Ausfall alles durchlassen
+                log.warning("Vorauswahl fehlgeschlagen (%s) – Themen ohne Vorauswahl weiter", type(exc).__name__)
+                verdicts = {t.id: (True, "Vorauswahl ausgefallen") for t in to_screen}
+            finally:
+                spent = sum(x or 0.0 for x in getattr(self.triage, "spent", []))
+                report.cost_usd += spent
+                for t in to_screen:  # Kosten anteilig auf die geprüften Themen verteilen
+                    self.db.add_cost(t.id, "vorauswahl", spent / len(to_screen))
+            for t in to_screen:
+                ok, why = verdicts[t.id]
+                if ok:
+                    self.db.update_fields(t.id, triage=f"ok: {why}")
+                else:
+                    self.db.update_fields(t.id, triage=why)
+                    self._discard(t, report, "Vorauswahl: kein Verbraucherbezug", f"Vorauswahl: {why}")
+
+        # Stufe 3: Skript mit dem großen Modell – nur für Themen, die die Vorauswahl bestanden haben
+        budget_calls = self.ch.max_new_topics_per_run
+        ready = [self.db.get(t.id) for t in kept]
+        ready = [t for t in ready if t.status == Status.NEU and (t.prev_status or (t.triage or "").startswith("ok"))]
+        for topic in ready:
             if budget_calls <= 0 or report.scripted >= target:
                 break
             budget_calls -= 1
+            report.checked += 1
             try:
                 self._script_one(topic, report)
             except Exception as exc:
@@ -128,9 +180,7 @@ class Pipeline:
             text, date_str = text or article.text, date_str or article.date
             self.db.update_fields(topic.id, source_text=text, published_at=date_str)
         if not self.dry_run and (problem := source_age_problem(date_str, datetime.now(timezone.utc))):
-            self.db.transition(topic.id, Status.VERWORFEN, note=problem)  # vor Claude → kostet nichts
-            report.discarded += 1
-            report.discard_reasons.append(problem.split(" (")[0])
+            self._discard(topic, report, problem.split(" (")[0], problem)  # vor Claude → kostet nichts
             return
         if len(text) < 300:
             self.db.transition(topic.id, Status.VERWORFEN, source_text=text, note="Quelltext zu kurz")
@@ -144,10 +194,8 @@ class Pipeline:
                 self.db.add_cost(topic.id, "claude", usd)
                 report.cost_usd += usd or 0.0
         if script.discard:
-            self.db.transition(topic.id, Status.VERWORFEN, source_text=text,
-                               note=f"Claude: {script.discard_reason}")
-            report.discarded += 1
-            report.discard_reasons.append("Claude: kein passendes Thema")
+            self.db.update_fields(topic.id, source_text=text)
+            self._discard(topic, report, "Skript-Prüfung: kein passendes Thema", f"Claude: {script.discard_reason}")
             return
         warnings = []
         if missing := unverified_quotes(script, text):
@@ -222,6 +270,8 @@ class Pipeline:
         self.step_render(report)
         report.cost_usd += self._run_cost
         report_result(*report.result())
+        for example in report.discard_examples[:8]:  # Begründungen im Job-Log/Detail
+            print(f"  verworfen: {example}", flush=True)
         log.info(report.summary(self.ch.key))
         if not self.dry_run:
             notify(self.s, report.summary(self.ch.key)
