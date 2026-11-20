@@ -16,6 +16,7 @@ log = logging.getLogger(__name__)
 
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 DAY_LABELS = dict(zip(DAYS, ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]))
+CHECK_TIME = "12:00"  # tägliche Sichtbarkeitsprüfung (YouTube → Datenbank)
 _TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
@@ -98,6 +99,10 @@ class Scheduler:
             self._sched.add_job(self._launch, trigger_for(DAYS, s["upload"]["time"]),
                                 args=["upload", ["upload", "--channel", ch], "zeitplan"],
                                 id="upload", misfire_grace_time=3600, coalesce=True)
+        # Sichtbarkeit täglich abgleichen – nur lesend, daher unabhängig vom Zeitplan-Schalter
+        self._sched.add_job(self._launch, trigger_for(DAYS, CHECK_TIME),
+                            args=["check-public", ["check-public", "--channel", ch], "zeitplan"],
+                            id="check-public", misfire_grace_time=3600, coalesce=True)
         log.info("Zeitplan angewendet: %s", self.next_runs())
 
     def next_runs(self) -> dict[str, str]:

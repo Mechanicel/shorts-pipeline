@@ -122,6 +122,24 @@ def cmd_regenerate(args, settings) -> int:
     return 0
 
 
+def cmd_refresh_dates(args, settings) -> int:
+    """Trägt fehlende Quelldaten (z. B. Verbraucherzentrale) für offene Themen von der Artikelseite nach."""
+    from .sources import fetch_article
+
+    db = _db(settings, False)
+    open_states = [Status.NEU, Status.SKRIPT, Status.VIDEO, Status.WARTET, Status.FREIGEGEBEN]
+    todo = [t for st in open_states for t in db.by_status(st, args.channel) if not t.published_at]
+    for t in todo:
+        try:
+            date_str = fetch_article(t.url).date
+        except Exception as exc:
+            print(f"#{t.id}: {type(exc).__name__}")
+            continue
+        db.update_fields(t.id, published_at=date_str)
+        print(f"#{t.id} {t.status}: {date_str or 'kein Datum gefunden'}  {t.title[:60]}")
+    return 0
+
+
 def cmd_auth_check(args, settings) -> int:
     """Prüft die YouTube-Token-Datei (Refresh, ohne Quota-Verbrauch)."""
     from google.auth.transport.requests import Request
@@ -232,6 +250,7 @@ def main(argv: list[str] | None = None) -> int:
     sp = add("regenerate", cmd_regenerate, "Thema mit neuem Skript + Video neu einreihen", channel=False)
     sp.add_argument("topic_id", type=int)
     add("auth-check", cmd_auth_check, "YouTube-Token prüfen (ohne Quota)")
+    add("refresh-dates", cmd_refresh_dates, "fehlende Quelldaten offener Themen nachtragen")
     sp = add("retry", cmd_retry, "Thema im Status 'fehler' erneut einreihen", channel=False)
     sp.add_argument("topic_id", type=int)
 

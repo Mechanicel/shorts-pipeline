@@ -71,6 +71,9 @@ CREATE TABLE IF NOT EXISTS topics (
     youtube_id    TEXT,
     background_credit TEXT,
     cost_json     TEXT,
+    yt_visibility TEXT,              -- öffentlich | privat | gelöscht (von außen geprüft)
+    yt_checked_at TEXT,
+    yt_published_at TEXT,            -- tatsächlicher Veröffentlichungszeitpunkt laut YouTube
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
     UNIQUE(channel, url)
@@ -88,7 +91,9 @@ CREATE TABLE IF NOT EXISTS job_runs (
     started_at  TEXT NOT NULL,
     finished_at TEXT,
     returncode  INTEGER,
-    log_path    TEXT
+    log_path    TEXT,
+    result_status  TEXT,            -- ok | warn | error
+    result_summary TEXT
 );
 CREATE TABLE IF NOT EXISTS quota_usage (
     day      TEXT NOT NULL,      -- Datum in America/Los_Angeles (YouTube-Quota-Reset)
@@ -123,6 +128,9 @@ class Topic:
     youtube_id: str | None
     background_credit: str | None
     cost_json: str | None
+    yt_visibility: str | None
+    yt_checked_at: str | None
+    yt_published_at: str | None
     created_at: str
     updated_at: str
 
@@ -151,10 +159,13 @@ class Database:
 
     def _migrate(self) -> None:
         """Fehlende Spalten bei bestehenden Datenbanken ergänzen (nur additive Änderungen)."""
-        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(topics)")}
-        for col in ("background_credit", "cost_json"):
-            if col not in cols:
-                self._conn.execute(f"ALTER TABLE topics ADD COLUMN {col} TEXT")
+        wanted = {"topics": ("background_credit", "cost_json", "yt_visibility", "yt_checked_at", "yt_published_at"),
+                  "job_runs": ("result_status", "result_summary")}
+        for table, columns in wanted.items():
+            cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+            for col in columns:
+                if col not in cols:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
 
     def close(self) -> None:
         self._conn.close()
@@ -230,8 +241,10 @@ class Database:
             self.update_fields(topic_id, cost_json=add_part(row[0], part, usd))
 
     def taken_publish_slots(self, channel: str) -> set[str]:
+        """Vergebene Termine – ohne gelöschte Videos (deren Slot ist wieder frei)."""
         rows = self._conn.execute(
-            "SELECT publish_at FROM topics WHERE channel=? AND publish_at IS NOT NULL", (channel,))
+            "SELECT publish_at FROM topics WHERE channel=? AND publish_at IS NOT NULL "
+            "AND COALESCE(yt_visibility,'') != 'gelöscht'", (channel,))
         return {r[0] for r in rows}
 
     def counts(self, channel: str | None = None) -> dict[str, int]:
@@ -266,9 +279,10 @@ class Database:
             (kind, json.dumps(args), trigger, _now(), log_path))
         return int(cur.lastrowid)
 
-    def finish_job(self, job_id: int, returncode: int) -> None:
-        self._conn.execute("UPDATE job_runs SET finished_at=?, returncode=? WHERE id=?",
-                           (_now(), returncode, job_id))
+    def finish_job(self, job_id: int, returncode: int, result_status: str | None = None,
+                   result_summary: str | None = None) -> None:
+        self._conn.execute("UPDATE job_runs SET finished_at=?, returncode=?, result_status=?, result_summary=? "
+                           "WHERE id=?", (_now(), returncode, result_status, result_summary, job_id))
 
     def recent_jobs(self, limit: int = 15) -> list[dict[str, Any]]:
         rows = self._conn.execute("SELECT * FROM job_runs ORDER BY id DESC LIMIT ?", (limit,))

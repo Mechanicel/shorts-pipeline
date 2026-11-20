@@ -16,7 +16,8 @@ from ..config import Settings, get_channel, load_settings
 from ..costs import format_cost
 from ..db import Database, Status
 from ..script import word_count
-from ..upload import BERLIN, STUDIO_URL, WOCHENTAGE, parse_publish_at
+from ..review_bot import source_date_label
+from ..upload import BERLIN, STUDIO_URL, UPLOAD_COST, WOCHENTAGE, parse_publish_at, quota_status
 from . import auth
 from .jobs import JobRunner, args_label, tail
 from .schedule import DAY_LABELS, DAYS, Scheduler, load_schedule, save_schedule
@@ -139,11 +140,17 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         d = db()
         now = datetime.now(timezone.utc)
         sched = load_schedule(d, channel)
+        uploaded = d.recent_topics([Status.HOCHGELADEN, Status.PAKET], 15)
+        quota = quota_status(s, d, now)
+        # Ob API-Uploads öffentlich werden, aus echten Prüfergebnissen ableiten (nicht behaupten)
+        api_public = any(t.youtube_id and t.yt_visibility == "öffentlich" for t in uploaded)
+        upload_blocked = s.upload_mode == "api" and quota["possible"] <= 0
         return page(
             request, "dashboard.html", msg=msg, err=err,
             waiting=d.by_status(Status.WARTET, channel.key),
             approved=d.by_status(Status.FREIGEGEBEN, channel.key),
-            uploaded=d.recent_topics([Status.HOCHGELADEN, Status.PAKET], 15),
+            uploaded=uploaded, quota=quota, api_public=api_public, upload_blocked=upload_blocked,
+            upload_cost=UPLOAD_COST, source_date_label=source_date_label,
             failed=d.by_status(Status.FEHLER, channel.key),
             in_work=d.by_status(Status.SKRIPT, channel.key) + d.by_status(Status.VIDEO, channel.key),
             counts=d.counts(channel.key), jobs=d.recent_jobs(10),

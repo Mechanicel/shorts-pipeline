@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -44,18 +45,34 @@ class JobRunner:
 
     def _run(self, job_id: int, kind: str, args: list[str], log_path: Path) -> None:
         rc = -1
+        result_file = log_path.with_suffix(".result.json")
+        env = {**os.environ, "SHORTS_RESULT_FILE": str(result_file)}
         try:
             with log_path.open("w", encoding="utf-8") as fh:
-                rc = subprocess.run([sys.executable, "-m", "shorts", *args], stdout=fh,
+                rc = subprocess.run([sys.executable, "-m", "shorts", *args], stdout=fh, env=env,
                                     stderr=subprocess.STDOUT, cwd=str(self.s.root)).returncode
         except Exception:
             log.exception("Job %s konnte nicht gestartet werden", kind)
         finally:
-            self._db_factory().finish_job(job_id, rc)
+            status, summary = read_result(result_file, rc)
+            self._db_factory().finish_job(job_id, rc, status, summary)
             with self._lock:
                 self._current = None
         if rc != 0:  # die CLI meldet Ausnahmen selbst; das hier fängt alles andere ab
             notify(self.s, f"⚠️ Web-Job '{kind}' endete mit Code {rc} (Log im Webinterface, Job #{job_id}).")
+
+
+def read_result(path: Path, rc: int) -> tuple[str, str]:
+    """Ergebnis aus SHORTS_RESULT_FILE; ein Exit-Code ≠ 0 ist immer ein technischer Fehler."""
+    data = {}
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError:
+            pass
+    if rc != 0:
+        return "error", data.get("summary") or f"Abbruch mit Code {rc} – siehe Log"
+    return data.get("status", "ok"), data.get("summary", "fertig")
 
 
 def tail(path: str | None, lines: int = 200) -> str:

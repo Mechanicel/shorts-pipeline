@@ -17,6 +17,7 @@ import httpx
 from .config import ChannelConfig, Settings
 from .db import Database, Status, Topic
 from .notify import notify
+from .result import ERROR, OK, WARN, plural, report
 from .upload import BERLIN, WOCHENTAGE, build_metadata, next_free_slot
 
 log = logging.getLogger(__name__)
@@ -125,6 +126,8 @@ def run_manual(settings: Settings, db: Database, channel: ChannelConfig, *, dry_
     due = [(t, s) for t, s in planned if is_due(s, now)]
     log.info("Manueller Modus: %d freigegeben, %d heute fällig", len(planned), len(due))
     if not due:
+        report(WARN, "Nichts fällig – " + (f"{plural(len(planned), 'Video wartet', 'Videos warten')} auf spätere Termine."
+                                          if planned else "keine freigegebenen Videos."))
         return 0
     sender = sender or HttpTelegramSender(settings)
     errors = []
@@ -138,4 +141,8 @@ def run_manual(settings: Settings, db: Database, channel: ChannelConfig, *, dry_
         db.transition(topic.id, Status.PAKET, telegram_message_id=msg_id)
     if errors:
         notify(settings, "⚠️ Upload-Pakete fehlgeschlagen (nächster Versuch morgen): " + ", ".join(errors))
-    return 1 if errors and len(errors) == len(due) else 0
+    sent = len(due) - len(errors)
+    summary = f"{sent} von {plural(len(due), 'Upload-Paket', 'Upload-Paketen')} an Telegram geschickt"
+    status = OK if not errors else (ERROR if sent == 0 else WARN)
+    report(status, summary + (f" – {plural(len(errors), 'Fehler', 'Fehler')}" if errors else ""))
+    return 1 if status == ERROR else 0

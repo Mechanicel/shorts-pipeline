@@ -6,6 +6,7 @@ Reagiert ausschließlich auf TELEGRAM_CHAT_ID. Nachrichten aus anderen Chats wer
 from __future__ import annotations
 
 import logging
+from datetime import date, datetime
 from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -30,7 +31,7 @@ def format_review(topic: Topic, eur_per_usd: float = 0.9) -> str:
     narration = s.get("narration", "")
     lines = [
         f"🎬 #{topic.id} [{topic.channel}] {s.get('title', topic.title)}",
-        f"Quelle: {topic.source_name}",
+        f"Quelle: {topic.source_name} · {source_date_label(topic.published_at)}",
         topic.url,
         "",
         f"📝 Sprechtext ({word_count(narration)} Wörter):",
@@ -50,6 +51,16 @@ def format_review(topic: Topic, eur_per_usd: float = 0.9) -> str:
               f"Hashtags: {' '.join(s.get('hashtags', []))}"]
     text = "\n".join(lines)
     return text if len(text) <= TG_TEXT_LIMIT else text[: TG_TEXT_LIMIT - 20] + "\n… (gekürzt)"
+
+
+def source_date_label(published_at: str | None, today: date | None = None) -> str:
+    """'vom 22.10.2026 (vor 29 Tagen) ⚠️' – Alter der Quelle ist beim Faktencheck entscheidend."""
+    if not published_at:
+        return "Datum unbekannt ⚠️"
+    d = datetime.fromisoformat(published_at[:10]).date()
+    age = ((today or date.today()) - d).days
+    warn = " ⚠️" if age > 7 else ""
+    return f"vom {d:%d.%m.%Y} (vor {age} Tagen){warn}" if age else f"vom {d:%d.%m.%Y} (heute)"
 
 
 def review_keyboard(topic_id: int) -> InlineKeyboardMarkup:

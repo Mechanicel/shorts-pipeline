@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from .config import ChannelConfig, Settings
 from .db import Database, Status, Topic
 from .notify import notify
+from .result import ERROR, OK, WARN, plural, report
 
 log = logging.getLogger(__name__)
 
@@ -143,28 +144,57 @@ def parse_publish_at(text: str, now: datetime) -> str:
     return to_utc_iso(local)
 
 
+def quota_reset(now: datetime) -> datetime:
+    """Nächster Kontingent-Reset (Mitternacht Pacific Time) in Berliner Zeit."""
+    pt = now.astimezone(PACIFIC)
+    nxt = datetime(pt.year, pt.month, pt.day, tzinfo=PACIFIC) + timedelta(days=1)
+    return nxt.astimezone(BERLIN)
+
+
+def quota_status(settings: Settings, db: Database, now: datetime) -> dict:
+    """Verbrauch heute, freie Einheiten, mögliche Uploads und Reset-Zeitpunkt (für CLI und Web)."""
+    used = db.quota_used(quota_day(now))
+    free = max(settings.youtube_daily_quota - used, 0)
+    by_quota = free // UPLOAD_COST
+    by_daily_limit = max(settings.youtube_max_uploads_per_day - used // UPLOAD_COST, 0)
+    reset = quota_reset(now)
+    reset_txt = f"{WOCHENTAGE[reset.weekday()]} {reset:%d.%m. %H:%M}"
+    if by_daily_limit < by_quota:
+        reason = f"Tageslimit ({settings.youtube_max_uploads_per_day} Uploads), wieder ab {reset_txt}"
+    else:
+        reason = f"Kontingent ({used}/{settings.youtube_daily_quota}), wieder ab {reset_txt}"
+    return {"used": used, "limit": settings.youtube_daily_quota, "free": free,
+            "possible": max(min(by_quota, by_daily_limit), 0), "reset": reset_txt, "reason": reason}
+
+
 def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry_run: bool = False,
                 now: datetime | None = None, publish_at: str | None = None, immediate: bool = False) -> int:
     """publish_at (UTC-ISO) gilt nur für das erste Video der Warteschlange (Test eines Wunschtermins).
-    immediate=True: alle Videos dieses Laufs sofort öffentlich, ohne Termin."""
+    immediate=True: alle Videos dieses Laufs sofort öffentlich, ohne Termin.
+    Meldet ehrlich, wie viele von wie vielen hochgeladen wurden (result.report)."""
     now = now or datetime.now(timezone.utc)
     pending = sorted(db.by_status(Status.FREIGEGEBEN, channel.key), key=lambda t: (t.updated_at, t.id))
     if not pending:
         log.info("Keine freigegebenen Videos für %s", channel.key)
-        print("Keine freigegebenen Videos – nichts hochzuladen.")
+        report(WARN, "Nichts zu tun – keine freigegebenen Videos.")
         return 0
 
     day = quota_day(now)
-    used = db.quota_used(day)
-    budget = min(settings.youtube_max_uploads_per_day,
-                 (settings.youtube_daily_quota - used) // UPLOAD_COST)
-    log.info("%d freigegeben, Quota heute %d/%d → max. %d Uploads", len(pending), used,
-             settings.youtube_daily_quota, budget)
+    q = quota_status(settings, db, now)
+    budget = q["possible"]
+    log.info("%d freigegeben, Quota heute %d/%d → max. %d Uploads", len(pending), q["used"], q["limit"], budget)
+    quota_hint = q["reason"]
+    if budget <= 0:
+        summary = f"0 von {plural(len(pending), 'Video', 'Videos')} hochgeladen – {quota_hint}"
+        if not dry_run:
+            notify(settings, f"⚠️ Upload [{channel.key}]: {summary}")
+        report(WARN, summary)
+        return 0
     taken = db.taken_publish_slots(channel.key)
 
     youtube = None if dry_run else youtube_client(channel)
-    done, errors = [], []
-    for topic in pending[:max(budget, 0)]:
+    done, errors, quota_hit = [], [], False
+    for topic in pending[:budget]:
         # Bereits zugewiesenen Slot (z. B. nach Retry) behalten, wenn er noch in der Zukunft liegt
         slot = topic.publish_at
         if immediate:
@@ -179,34 +209,43 @@ def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry
         if dry_run:
             print(f"[dry-run] #{topic.id} → {slot or 'sofort öffentlich'}  {body['snippet']['title']}")
             continue
-        db.update_fields(topic.id, publish_at=slot or to_utc_iso(now))
+        db.update_fields(topic.id, publish_at=slot)  # sofort → kein Termin (kein Schein-Slot mehr)
         try:
             video_id = upload_video(youtube, topic.video_path, body)
         except Exception as exc:
             if _is_quota_error(exc):
                 db.add_quota(day, settings.youtube_daily_quota)  # Tag als verbraucht markieren
-                errors.append(f"Quota erschöpft bei #{topic.id} – Rest morgen")
+                quota_hit = True
                 break
             log.exception("Upload #%s fehlgeschlagen", topic.id)
             db.transition(topic.id, Status.FEHLER, note=f"Upload: {type(exc).__name__}: {exc}"[:1000])
             errors.append(f"#{topic.id}: {type(exc).__name__}: {exc}"[:300])
             continue
         db.add_quota(day, UPLOAD_COST)
-        db.transition(topic.id, Status.HOCHGELADEN, youtube_id=video_id)
+        extra = {"yt_published_at": to_utc_iso(now)} if slot is None else {}
+        db.transition(topic.id, Status.HOCHGELADEN, youtube_id=video_id, **extra)
         print(f"Hochgeladen: #{topic.id} → Video-ID: {video_id}  https://youtu.be/{video_id}  "
               + ("(sofort öffentlich)" if slot is None else f"(privat, geplant {slot})"), flush=True)
         done.append(format_upload_line(topic, body["snippet"]["title"], video_id, slot))
 
-    if not dry_run and (done or errors):
-        msg = f"📤 Upload [{channel.key}]: {len(done)} hochgeladen"
-        if done:
-            msg += "\n\n" + "\n\n".join(done)
-            msg += ("\n\nℹ️ API-Projekt noch nicht auditiert: Falls ein Video zum Termin nicht live geht, "
-                    "über den Studio-Link auf „Öffentlich“ stellen.")
-        if errors:
-            msg += "\n⚠️ " + "\n⚠️ ".join(errors)
-        rest = len(pending) - len(done)
-        if rest > 0:
-            msg += f"\n{rest} warten auf den nächsten Upload-Lauf."
-        notify(settings, msg)
-    return 1 if errors and not done else 0
+    if dry_run:
+        report(OK, f"Dry-Run: {plural(min(budget, len(pending)), 'Video', 'Videos')} würden hochgeladen.")
+        return 0
+
+    n, total = len(done), len(pending)
+    reasons = []
+    if quota_hit or (total - n - len(errors) > 0 and budget < total):
+        reasons.append(quota_hint)
+    if errors:
+        reasons.append(plural(len(errors), "Fehler", "Fehler"))
+    summary = f"{n} von {plural(total, 'Video', 'Videos')} hochgeladen" + (f" – {'; '.join(reasons)}" if reasons else "")
+    status = OK if n == total else (ERROR if n == 0 and errors else WARN)
+
+    msg = f"📤 Upload [{channel.key}]: {summary}"
+    if done:
+        msg += "\n\n" + "\n\n".join(done)
+    if errors:
+        msg += "\n⚠️ " + "\n⚠️ ".join(errors)
+    notify(settings, msg)
+    report(status, summary)
+    return 1 if status == ERROR else 0

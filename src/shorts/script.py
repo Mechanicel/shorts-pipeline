@@ -49,7 +49,8 @@ Hard rules, in this order of priority:
 1. Use only facts that are explicitly stated in the SOURCE TEXT. No outside knowledge, no \
 assumptions, no rounded or extrapolated numbers, no invented dates. If the text is vague, the \
 script stays vague or the topic is discarded.
-2. Discard the topic (discard=true, with a short reason) if any of these apply: no concrete \
+2. Discard the topic (discard=true, with a short reason) if any of these apply: the change already \
+took effect more than 4 weeks before TODAY and the source reports nothing new about it (old news); no concrete \
 change, deadline, price, amount or right for private individuals; purely political/diplomatic \
 news; the decisive facts (what/when/who) are missing or uncertain; the text is only a teaser.
 3. Every number, date, amount, deadline or rule in the narration needs an evidence entry whose \
@@ -76,7 +77,8 @@ numbers written as people say them, no abbreviations the voice would stumble ove
 no URLs.
 - Close with one short takeaway sentence that leads naturally back to the hook (the video loops). \
 No outro, no "Quelle", no request for likes or subscriptions.
-- The title is factual and specific. overlay_title is a few punchy words for the screen.
+- The title is factual and specific and promises nothing the narration does not deliver: if the title \
+says "so schaltest du X ab", the narration must explain exactly that. overlay_title is a few punchy words.
 
 On-screen graphic (shown large in the foreground, so it must be exact):
 - key_facts: the 1–3 most important numbers, in the order they are spoken. value uses digits and \
@@ -90,7 +92,8 @@ label "für neue Smart-Geräte") or leave key_facts with the single date-free nu
 """
 
 USER_TEMPLATE = """\
-SOURCE ({source_name}): {url}
+TODAY: {today}
+SOURCE ({source_name}, published {source_date}): {url}
 HEADLINE: {headline}
 
 SOURCE TEXT:
@@ -100,7 +103,8 @@ SOURCE TEXT:
 
 
 class ScriptWriter(Protocol):
-    def write(self, *, headline: str, url: str, source_name: str, text: str) -> ShortScript: ...
+    def write(self, *, headline: str, url: str, source_name: str, text: str,
+              source_date: str = "unbekannt", today: str = "") -> ShortScript: ...
 
 
 def word_count(text: str) -> int:
@@ -220,9 +224,12 @@ class ClaudeScriptWriter:
             raise RuntimeError(f"Keine gültige Antwort (stop_reason={response.stop_reason})")
         return response.parsed_output
 
-    def write(self, *, headline: str, url: str, source_name: str, text: str) -> ShortScript:
+    def write(self, *, headline: str, url: str, source_name: str, text: str,
+              source_date: str = "unbekannt", today: str = "") -> ShortScript:
         self.spent = []  # Kosten je API-Aufruf dieses Skripts (auch bei Fehlschlag auslesbar)
-        user = USER_TEMPLATE.format(source_name=source_name, url=url, headline=headline, text=text)
+        from datetime import date
+        user = USER_TEMPLATE.format(source_name=source_name, url=url, headline=headline, text=text,
+                                    source_date=source_date, today=today or date.today().isoformat())
         script = self._call(user)
         problems = validate_script(script)
         if problems:  # ein Korrekturversuch
@@ -241,7 +248,8 @@ class SampleScriptWriter:
     def __init__(self, sample: dict) -> None:
         self._sample = sample
 
-    def write(self, *, headline: str, url: str, source_name: str, text: str) -> ShortScript:
+    def write(self, *, headline: str, url: str, source_name: str, text: str,
+              source_date: str = "unbekannt", today: str = "") -> ShortScript:
         return ShortScript.model_validate(self._sample)
 
 

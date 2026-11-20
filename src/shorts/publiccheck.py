@@ -1,8 +1,9 @@
-"""Prüft von außen (ohne Anmeldung), ob hochgeladene Videos für Zuschauer abspielbar sind.
+"""Prüft von außen (ohne Anmeldung), ob hochgeladene Videos für Zuschauer abspielbar sind,
+und schreibt das Ergebnis in die Datenbank (yt_visibility, yt_published_at, yt_checked_at).
 
 oEmbed 200 + playabilityStatus OK  → öffentlich
-LOGIN_REQUIRED "Privates Video"     → privat (oder gesperrt)
-ERROR "Video nicht verfügbar"       → gelöscht/entfernt/gesperrt
+LOGIN_REQUIRED "Privates Video"     → privat (geplant oder gesperrt)
+ERROR "Video nicht verfügbar"       → gelöscht (oder von YouTube entfernt)
 """
 from __future__ import annotations
 
@@ -13,8 +14,10 @@ from datetime import datetime, timezone
 import httpx
 
 from .db import Database, Status
+from .result import OK, WARN, plural, report
 
 UA = {"User-Agent": "Mozilla/5.0", "Accept-Language": "de-DE"}
+PUBLIC, PRIVATE, DELETED = "öffentlich", "privat", "gelöscht"
 
 
 @dataclass(frozen=True)
@@ -23,15 +26,16 @@ class Visibility:
     oembed: int
     playability: str
     reason: str
+    publish_date: str | None = None
 
     @property
     def label(self) -> str:
         if self.oembed == 200 and self.playability == "OK":
-            return "öffentlich"
+            return PUBLIC
         if self.playability == "LOGIN_REQUIRED":
-            return "privat"
+            return PRIVATE
         if self.playability == "ERROR":
-            return "nicht verfügbar"
+            return DELETED
         return f"unklar ({self.playability or self.oembed})"
 
 
@@ -40,34 +44,61 @@ def parse_playability(html: str) -> tuple[str, str]:
     return (m.group(1), m.group(2) or "") if m else ("", "")
 
 
+def parse_publish_date(html: str) -> str | None:
+    """'publishDate' der Watch-Seite → UTC-ISO (nur bei öffentlichen Videos vorhanden)."""
+    m = re.search(r'"publishDate":"([^"]+)"', html)
+    if not m:
+        return None
+    try:
+        return datetime.fromisoformat(m.group(1)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return None
+
+
 def check_video(video_id: str) -> Visibility:
     oe = httpx.get("https://www.youtube.com/oembed", timeout=20, headers=UA,
                    params={"url": f"https://www.youtube.com/watch?v={video_id}", "format": "json"})
     page = httpx.get(f"https://www.youtube.com/watch?v={video_id}", timeout=20, headers=UA,
                      follow_redirects=True)
     status, reason = parse_playability(page.text)
-    return Visibility(video_id, oe.status_code, status, reason)
+    return Visibility(video_id, oe.status_code, status, reason, parse_publish_date(page.text))
 
 
-def run_check(db: Database, channel: str, extra_ids: list[str] | None = None) -> int:
+def run_check(db: Database, channel: str, extra_ids: list[str] | None = None, checker=check_video) -> int:
     now = datetime.now(timezone.utc)
-    rows = [(t.id, t.youtube_id, t.publish_at, (t.script or {}).get("title", t.title))
-            for t in db.by_status(Status.HOCHGELADEN, channel) if t.youtube_id]
+    now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    topics = [t for t in db.by_status(Status.HOCHGELADEN, channel) if t.youtube_id]
+    rows = [(t.id, t.youtube_id, t.publish_at, (t.script or {}).get("title", t.title)) for t in topics]
     rows += [(None, vid, None, "(per --id)") for vid in (extra_ids or [])]
     if not rows:
-        print("Keine hochgeladenen Videos mit YouTube-ID.")
+        report(WARN, "Nichts zu prüfen – keine hochgeladenen Videos mit YouTube-ID.")
         return 0
-    problems = 0
+    findings, counts = [], {}
     for tid, vid, publish_at, title in rows:
-        v = check_video(vid)
+        v = checker(vid)
+        counts[v.label] = counts.get(v.label, 0) + 1
+        if tid is not None:
+            fields = {"yt_visibility": v.label, "yt_checked_at": now_iso}
+            if v.publish_date:
+                fields["yt_published_at"] = v.publish_date
+            db.update_fields(tid, **fields)
         due = publish_at and datetime.fromisoformat(publish_at.replace("Z", "+00:00")) <= now
         flag = ""
-        if due and v.label != "öffentlich":
-            flag, problems = "  ⚠️ Termin vorbei, aber nicht öffentlich", problems + 1
-        elif publish_at and not due and v.label == "öffentlich":
-            flag = "  (schon vor dem Termin öffentlich – von Hand veröffentlicht?)"
-        when = f"Termin {publish_at}" if publish_at else "kein Termin"
-        print(f"#{tid or '-':<4} {vid}  {v.label:<16} {when}  {title[:50]}{flag}")
-        if v.reason and v.label != "öffentlich":
+        if v.label == DELETED:
+            flag = "  ⚠️ auf YouTube nicht (mehr) vorhanden"
+            findings.append(f"#{tid or vid} gelöscht")
+        elif due and v.label != PUBLIC:
+            flag = "  ⚠️ Termin vorbei, aber nicht öffentlich"
+            findings.append(f"#{tid or vid} nicht öffentlich trotz Termin")
+        elif v.label == PUBLIC and publish_at and not due:
+            flag = "  (schon vor dem Termin öffentlich – von Hand veröffentlicht)"
+        when = f"Termin {publish_at}" if publish_at else "ohne Termin"
+        print(f"#{tid or '-':<4} {vid}  {v.label:<10} {when}  {title}{flag}")
+        if v.reason and v.label != PUBLIC:
             print(f"       YouTube: {v.reason}")
-    return 1 if problems else 0
+    overview = ", ".join(f"{n} {label}" for label, n in counts.items())
+    if findings:
+        report(WARN, f"{plural(len(rows), 'Video', 'Videos')} geprüft ({overview}) – " + "; ".join(findings))
+    else:
+        report(OK, f"{plural(len(rows), 'Video', 'Videos')} geprüft ({overview}) – alles wie erwartet.")
+    return 0  # Befunde sind kein technischer Fehler

@@ -6,6 +6,9 @@
   <div class="card"><div class="muted">Kosten 7 / 30 Tage</div>
     <div class="stat">{{ "%.2f"|format(cost_week*eur) | replace(".", ",") }} €</div>
     <div class="muted">30 Tage: {{ "%.2f"|format(cost_month*eur) | replace(".", ",") }} €</div></div>
+  <div class="card"><div class="muted">YouTube-Kontingent heute</div>
+    <div class="stat">{{ quota.used }} / {{ quota.limit }}</div>
+    <div class="muted">noch {{ quota.possible }} Upload(s) möglich · Reset {{ quota.reset }}</div></div>
   <div class="card"><div class="muted">Zeitplan</div>
     <div>Erstellen: {% if sched.pipeline.enabled %}<span class="pill on">an</span> {{ next_runs.pipeline or "" }}{% else %}<span class="pill off">aus</span>{% endif %}</div>
     <div>Upload: {% if sched.upload.enabled %}<span class="pill on">an</span> {{ next_runs.upload or "" }}{% else %}<span class="pill off">aus</span>{% endif %}</div>
@@ -35,9 +38,14 @@
     <label><input type="radio" name="when" value="wunsch"> Wunschtermin
       <input type="datetime-local" name="at" value="{{ default_at }}"></label>
     <label><input type="radio" name="when" value="sofort"> sofort öffentlich</label>
-    <button class="primary" {% if running %}disabled{% endif %}>📤 Alle {{ approved|length }} hochladen</button>
+    <button class="primary" {% if running or upload_blocked %}disabled{% endif %}>📤 Alle {{ approved|length }} hochladen</button>
   </form>
-  <p class="muted">Modus laut .env: <b>{{ upload_mode }}</b>. Wunschtermin gilt fürs erste Video, „sofort“ für alle.</p>
+  {% if upload_blocked %}<p class="warn">Upload gesperrt: {{ quota.reason }} (ein Upload braucht {{ upload_cost }} Einheiten, frei: {{ quota.free }}).</p>{% endif %}
+  <p class="muted">
+    {% if upload_mode == "api" %}<span class="pill on">Upload per YouTube-API</span>
+      {% if api_public %}API-Uploads werden derzeit öffentlich (zuletzt von außen geprüft).{% else %}Ob API-Uploads öffentlich werden, ist noch nicht geprüft – nach dem Upload „Sichtbarkeit prüfen“.{% endif %}
+    {% else %}<span class="pill">Manuell über YouTube Studio</span> Am Termin-Tag kommt ein Upload-Paket per Telegram.{% endif %}
+    Wunschtermin gilt fürs erste Video, „sofort“ für alle.</p>
 </div>
 {% endif %}
 
@@ -47,7 +55,7 @@
   <video src="/media/{{ t.id }}.mp4" controls preload="metadata"></video>
   <div>
     <h3 style="margin:0 0 6px">#{{ t.id }} {{ s.get("title", t.title) }}</h3>
-    <div class="muted">{{ t.source_name }} · <a href="{{ t.url }}" target="_blank" rel="noopener">Quelle öffnen</a> · {{ word_count(s.get("narration","")) }} Wörter</div>
+    <div class="muted">{{ t.source_name }} · <b>Quelle {{ source_date_label(t.published_at) }}</b> · <a href="{{ t.url }}" target="_blank" rel="noopener">Quelle öffnen</a> · {{ word_count(s.get("narration","")) }} Wörter</div>
     {% if t.note %}<p class="warn">⚠️ {{ t.note }}</p>{% endif %}
     <p>{{ s.get("narration","") }}</p>
     <p class="muted">🔢 {% if s.get("date_label") %}[{{ s.date_label }}] {% endif %}{% for f in s.get("key_facts", []) %}{{ f.value }} = {{ f.label }}{% if not loop.last %} · {% endif %}{% endfor %}<br>
@@ -79,12 +87,15 @@
 
 <h2>Zuletzt hochgeladen</h2>
 <div class="card"><table>
-  <tr><th>#</th><th>Titel</th><th>Termin</th><th>Links</th><th>Kosten</th></tr>
+  <tr><th>#</th><th>Titel</th><th>Sichtbarkeit</th><th>Veröffentlicht / Termin</th><th>Links</th><th>Kosten</th></tr>
   {% for t in uploaded %}<tr>
-    <td>{{ t.id }}</td><td>{{ (t.script or {}).get("title", t.title)[:70] }}</td><td>{{ t.publish_at | local_time }}</td>
+    <td>{{ t.id }}</td><td>{{ (t.script or {}).get("title", t.title)[:70] }}</td>
+    <td>{% if t.yt_visibility == "öffentlich" %}<span class="pill on">öffentlich</span>{% elif t.yt_visibility == "gelöscht" %}<span class="pill off">gelöscht</span>{% elif t.yt_visibility %}<span class="pill">{{ t.yt_visibility }}</span>{% else %}<span class="muted">nicht geprüft</span>{% endif %}
+      {% if t.yt_checked_at %}<br><span class="muted">geprüft {{ t.yt_checked_at | local_time }}</span>{% endif %}</td>
+    <td>{% if t.yt_published_at %}{{ t.yt_published_at | local_time }}{% elif t.publish_at %}geplant {{ t.publish_at | local_time }}{% else %}–{% endif %}</td>
     <td>{% if t.youtube_id %}<a href="https://youtu.be/{{ t.youtube_id }}" target="_blank" rel="noopener">YouTube</a> · <a href="{{ studio_url.format(id=t.youtube_id) }}" target="_blank" rel="noopener">Studio</a>{% else %}{{ t.status }}{% endif %}</td>
-    <td class="muted">{{ format_cost(t.cost_json, eur).split(" (")[0] }}</td></tr>
-  {% else %}<tr><td colspan="5" class="muted">Noch nichts.</td></tr>{% endfor %}
+    <td class="muted">{% set c = format_cost(t.cost_json, eur) %}{{ "–" if c == "keine Angaben" else c.split(" (")[0] }}</td></tr>
+  {% else %}<tr><td colspan="6" class="muted">Noch nichts.</td></tr>{% endfor %}
 </table></div>
 
 <h2>Letzte Jobs</h2>
@@ -93,7 +104,12 @@
   {% for j in jobs %}<tr>
     <td><a href="/jobs/{{ j.id }}">{{ j.id }}</a></td><td><code>{{ j.args | args_label }}</code></td><td>{{ j.trigger }}</td>
     <td>{{ j.started_at | local_time }}</td>
-    <td>{% if j.finished_at is none %}läuft …{% elif j.returncode == 0 %}✅{% else %}⚠️ Code {{ j.returncode }}{% endif %}</td></tr>
+    <td>{% if j.finished_at is none %}läuft …
+        {% elif j.result_status == "ok" %}✅ {{ j.result_summary }}
+        {% elif j.result_status == "warn" %}⚠️ {{ j.result_summary }}
+        {% elif j.result_status == "error" %}❌ {{ j.result_summary }}
+        {% elif j.returncode == 0 %}✅ (altes Format)
+        {% else %}❌ Code {{ j.returncode }}{% endif %}</td></tr>
   {% else %}<tr><td colspan="5" class="muted">Noch keine Jobs aus dem Webinterface.</td></tr>{% endfor %}
 </table></div>
 {% endblock %}

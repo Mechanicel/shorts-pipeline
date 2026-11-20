@@ -134,12 +134,23 @@ def collect_topics(db: Database, channel: ChannelConfig) -> tuple[int, list[str]
     return new, errors
 
 
-def fetch_article_text(url: str, max_chars: int = 20000) -> str:
-    """Lädt den Haupttext eines Artikels (ohne Navigation/Footer)."""
+@dataclass(frozen=True)
+class Article:
+    text: str
+    date: str | None  # YYYY-MM-DD laut Seite (article:published_time, JSON-LD, "Stand: …"), sonst None
+
+
+def fetch_article(url: str, max_chars: int = 20000) -> Article:
+    """Lädt Haupttext (ohne Navigation/Footer) und Veröffentlichungsdatum eines Artikels."""
     html = _http_get(url).text
     text = trafilatura.extract(html, url=url, include_comments=False, include_tables=True,
                                favor_precision=True) or ""
     if len(text) > max_chars:
         log.info("Artikeltext %s auf %d Zeichen gekürzt (war %d)", url, max_chars, len(text))
         text = text[:max_chars]
-    return text
+    meta = trafilatura.extract_metadata(html, default_url=url)
+    return Article(text, meta.date if meta and meta.date else None)
+
+
+def fetch_article_text(url: str, max_chars: int = 20000) -> str:
+    return fetch_article(url, max_chars).text

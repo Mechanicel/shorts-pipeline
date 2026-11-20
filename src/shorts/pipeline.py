@@ -17,13 +17,26 @@ from .backgrounds import pick_background
 from .render import RenderJob, probe_duration, render
 from .script import (ClaudeScriptWriter, SampleScriptWriter, ScriptWriter, script_to_json,
                      unverified_numbers, unverified_quotes)
-from .sources import collect_topics, fetch_article_text
+from .result import ERROR, OK, WARN, plural, report as report_result
+from .sources import collect_topics, fetch_article
 from .subtitles import estimate_timings, split_words, whisper_timings
 from .tts import TTSEngine, apply_speed, get_tts
 
 log = logging.getLogger(__name__)
 
-STALE_AFTER_DAYS = 21
+STALE_AFTER_DAYS = 21       # neu-Themen, die so lange liegen bleiben, werden verworfen
+MAX_SOURCE_AGE_DAYS = 21    # Quelle (Artikeldatum) darf höchstens so alt sein
+
+
+def source_age_problem(date_str: str | None, today: datetime) -> str | None:
+    """None = ok, sonst Verwerfungsgrund. date_str: ISO-Datum oder -Zeitstempel der Quelle."""
+    if not date_str:
+        return "kein Datum (Ratgeber ohne Datum)"
+    d = datetime.fromisoformat(date_str[:10]).date()
+    age = (today.date() - d).days
+    if age > MAX_SOURCE_AGE_DAYS:
+        return f"zu alt (Quelle vom {d:%d.%m.%Y}, {age} Tage)"
+    return None
 
 
 @dataclass
@@ -36,6 +49,19 @@ class RunReport:
     videos: list[Path] = field(default_factory=list)
     cost_usd: float = 0.0
     eur_per_usd: float = 0.9
+    discard_reasons: list[str] = field(default_factory=list)
+
+    def result(self) -> tuple[str, str]:
+        """(Status, Zusammenfassung) für result.report – ✅ nur, wenn Videos entstanden sind."""
+        from collections import Counter
+        why = ", ".join(f"{n}× {r}" for r, n in Counter(self.discard_reasons).items())
+        text = (f"{plural(self.rendered, 'Video', 'Videos')} erstellt, {self.discarded} verworfen"
+                + (f" ({why})" if why else "") + f", {plural(len(self.errors), 'Fehler', 'Fehler')}")
+        if self.rendered and not self.errors:
+            return OK, text
+        if self.rendered or not self.errors:
+            return WARN, text + ("" if self.rendered else " – keine neuen Videos")
+        return ERROR, text
 
     def summary(self, channel: str) -> str:
         s = (f"Pipeline [{channel}]: {self.new_topics} neue Themen, {self.scripted} Skripte, "
@@ -96,14 +122,23 @@ class Pipeline:
                 self._fail(topic, "Skript", exc, report)
 
     def _script_one(self, topic: Topic, report: RunReport) -> None:
-        text = topic.source_text or fetch_article_text(topic.url)
+        text, date_str = topic.source_text, topic.published_at
+        if not text or not date_str:  # Datum notfalls von der Artikelseite (z. B. Verbraucherzentrale)
+            article = fetch_article(topic.url)
+            text, date_str = text or article.text, date_str or article.date
+            self.db.update_fields(topic.id, source_text=text, published_at=date_str)
+        if not self.dry_run and (problem := source_age_problem(date_str, datetime.now(timezone.utc))):
+            self.db.transition(topic.id, Status.VERWORFEN, note=problem)  # vor Claude → kostet nichts
+            report.discarded += 1
+            report.discard_reasons.append(problem.split(" (")[0])
+            return
         if len(text) < 300:
             self.db.transition(topic.id, Status.VERWORFEN, source_text=text, note="Quelltext zu kurz")
             report.discarded += 1
             return
         try:
-            script = self.writer.write(headline=topic.title, url=topic.url,
-                                       source_name=topic.source_name, text=text)
+            script = self.writer.write(headline=topic.title, url=topic.url, source_name=topic.source_name,
+                                       text=text, source_date=(date_str or "unbekannt")[:10])
         finally:  # auch fehlgeschlagene/verworfene Versuche kosten Geld
             for usd in getattr(self.writer, "spent", []):
                 self.db.add_cost(topic.id, "claude", usd)
@@ -112,6 +147,7 @@ class Pipeline:
             self.db.transition(topic.id, Status.VERWORFEN, source_text=text,
                                note=f"Claude: {script.discard_reason}")
             report.discarded += 1
+            report.discard_reasons.append("Claude: kein passendes Thema")
             return
         warnings = []
         if missing := unverified_quotes(script, text):
@@ -185,6 +221,7 @@ class Pipeline:
         self.step_script(report)
         self.step_render(report)
         report.cost_usd += self._run_cost
+        report_result(*report.result())
         log.info(report.summary(self.ch.key))
         if not self.dry_run:
             notify(self.s, report.summary(self.ch.key)
