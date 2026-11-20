@@ -103,14 +103,14 @@ def test_zeitplan_validierung_und_speichern(env) -> None:
     _setup(client)
     r = client.post("/settings", data={"pipeline_enabled": "on", "day_tue": "on", "day_fri": "on",
                                        "pipeline_time": "07:15", "pipeline_limit": "3",
-                                       "upload_time": "10:00", "publish_slots": "Tue 18:00\nFri 18:00"})
+                                       "upload_time": "10:00", "slot_day_0": "tue", "slot_time_0": "18:00",
+                                       "slot_day_1": "fri", "slot_time_1": "18:00", "slot_day_2": "", "slot_time_2": ""})
     assert "Zeitplan gespeichert" in r.text
     s = load_schedule(Database(settings.db_path), load_channels()["de"])
     assert s["pipeline"] == {"enabled": True, "days": ["tue", "fri"], "time": "07:15", "limit": 3}
     assert s["upload"]["enabled"] is False and s["publish_slots"] == ["Tue 18:00", "Fri 18:00"]
-    r = client.post("/settings", data={"pipeline_time": "25:00", "pipeline_limit": "3", "upload_time": "10:00",
-                                       "publish_slots": "Funday 9:00"})
-    assert "Wochentag" in r.text and "HH:MM" in r.text and "ungültig" in r.text
+    r = client.post("/settings", data={"pipeline_time": "25:00", "pipeline_limit": "3", "upload_time": "10:00"})
+    assert "Wochentag" in r.text and "HH:MM" in r.text and "Veröffentlichungstermin" in r.text
 
 
 def test_standard_zeitplan_ist_aus() -> None:
@@ -178,3 +178,70 @@ def test_jobrunner_protokolliert_und_verhindert_parallele_jobs(env) -> None:
         time.sleep(0.1)
     job = Database(settings.db_path).get_job(job_id)
     assert job["returncode"] == 0 and Path(job["log_path"]).exists()
+
+
+# ------------------------------------------------------------------ P1: Bedienung
+def test_metadaten_bearbeiten_und_freigabe_zuruecknehmen(env) -> None:
+    settings, client = env
+    _setup(client)
+    video = settings.output_dir / "short.mp4"
+    video.write_bytes(b"mp4")
+    tid = _waiting_topic(settings, video)
+    r = client.post(f"/topics/{tid}/meta", data={"title": "Neuer  Titel", "description": "Text",
+                                                 "hashtags": "#a, b #c"})
+    assert "gespeichert" in r.text
+    s = Database(settings.db_path).get(tid).script
+    assert (s["title"], s["description"], s["hashtags"]) == ("Neuer Titel", "Text", ["#a", "#b", "#c"])
+    assert "spitzen Klammern" in client.post(f"/topics/{tid}/meta", data={"title": "<b>x</b>"}).text
+    client.post(f"/topics/{tid}/approve")
+    client.post(f"/topics/{tid}/unapprove")
+    assert Database(settings.db_path).get(tid).status == Status.WARTET
+
+
+def test_freigabe_direkt_aus_status_video(env) -> None:
+    settings, client = env
+    _setup(client)
+    db = Database(settings.db_path)
+    tid = db.add_topic("de", "https://bund.de/v", "Q", "T")
+    db.transition(tid, Status.SKRIPT, script_json=json.dumps(sample_data.SAMPLE_SCRIPT))
+    db.transition(tid, Status.VIDEO, video_path=str(settings.output_dir / "x.mp4"))
+    assert "noch nicht in Telegram" in client.get("/").text   # sofort sichtbar, kein "In Arbeit" mehr
+    client.post(f"/topics/{tid}/approve")
+    assert Database(settings.db_path).get(tid).status == Status.FREIGEGEBEN
+
+
+def test_warn_badges() -> None:
+    from shorts.web.app import warning_badges
+    from datetime import date
+    db = Database(":memory:")
+    tid = db.add_topic("de", "https://a.de", "Q", "T", published_at="2026-10-22")
+    db.update_fields(tid, source_text="Der Gesetzentwurf sieht vor ...", note="Grafik-Zahlen nicht im Quelltext: 10 €",
+                     script_json=json.dumps({"narration": "Du bekommst ab Januar mehr Geld."}))
+    badges = warning_badges(db.get(tid), today=date(2026, 11, 20))
+    assert "Zahl nicht im Quelltext" in badges and "Quelle 29 Tage alt" in badges
+    assert any("Rechtsstatus" in b for b in badges)
+
+
+def test_job_namen_und_log_links() -> None:
+    from shorts.web.app import job_label, linkify_topics
+    assert job_label(json.dumps(["upload", "--channel", "de", "--sofort", "--mode", "api"])) == "Upload · sofort"
+    assert job_label(json.dumps(["upload", "--channel", "de", "--only", "623"])) == "Upload · nächste Termine · #623"
+    assert job_label(json.dumps(["pipeline", "--channel", "de", "--limit", "3"])) == "Videos erstellen (3)"
+    assert linkify_topics("Video #102 fertig") == 'Video <a href="/#t102">#102</a> fertig'
+
+
+def test_404_als_html_seite(env) -> None:
+    _, client = env
+    _setup(client)
+    r = client.get("/jobs/99999")
+    assert r.status_code == 404 and "<h1>Fehler 404</h1>" in r.text and "Zur Übersicht" in r.text
+
+
+def test_einstellungen_warnt_bei_ungleichgewicht(env) -> None:
+    _, client = env
+    _setup(client)
+    r = client.post("/settings", data={"pipeline_enabled": "on", "day_mon": "on", "day_tue": "on",
+                                       "pipeline_time": "06:00", "pipeline_limit": "5", "upload_time": "09:30",
+                                       "slot_day_0": "mon", "slot_time_0": "17:00"}, follow_redirects=True)
+    assert "10 Videos pro Woche" in r.text and "nur 1 Termin –" in r.text
+    assert "Nächste freie Termine" in r.text

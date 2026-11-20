@@ -1,14 +1,16 @@
 {% extends "base.html" %}{% block title %}Übersicht{% endblock %}
 {% block content %}
+<h1>Übersicht</h1>
 <div class="grid">
   <div class="card"><div class="muted">Warten auf Freigabe</div><div class="stat">{{ waiting|length }}</div></div>
   <div class="card"><div class="muted">Freigegeben, nicht hochgeladen</div><div class="stat">{{ approved|length }}</div></div>
-  <div class="card"><div class="muted">Kosten 7 / 30 Tage</div>
+  <div class="card"><div class="muted">Kosten</div>
     <div class="stat">{{ "%.2f"|format(cost_week*eur) | replace(".", ",") }} €</div>
-    <div class="muted">30 Tage: {{ "%.2f"|format(cost_month*eur) | replace(".", ",") }} €</div></div>
+    <div class="muted">diese Woche · Monat {{ "%.2f"|format(cost_month*eur) | replace(".", ",") }} € ·
+      Ø {{ "%.2f"|format(avg_video*eur) | replace(".", ",") }} € pro Video</div></div>
   <div class="card"><div class="muted">YouTube-Kontingent heute</div>
     <div class="stat">{{ quota.used }} / {{ quota.limit }}</div>
-    <div class="muted">noch {{ quota.possible }} Upload(s) möglich · Reset {{ quota.reset }}</div></div>
+    <div class="muted">{{ plural(quota.possible, "Upload", "Uploads") }} möglich · Reset {{ quota.reset }}</div></div>
   <div class="card"><div class="muted">Zeitplan</div>
     <div>Erstellen: {% if sched.pipeline.enabled %}<span class="pill on">an</span> {{ next_runs.pipeline or "" }}{% else %}<span class="pill off">aus</span>{% endif %}</div>
     <div>Upload: {% if sched.upload.enabled %}<span class="pill on">an</span> {{ next_runs.upload or "" }}{% else %}<span class="pill off">aus</span>{% endif %}</div>
@@ -19,97 +21,133 @@
   <h2 style="margin-top:0">Aktionen</h2>
   <div class="row">
     <form method="post" action="/actions/new-video" class="row">
-      <select name="count">{% for n in range(1, 8) %}<option value="{{ n }}">{{ n }}</option>{% endfor %}</select>
-      <button class="primary" {% if running %}disabled{% endif %}>🎬 Neue(s) Video(s) erstellen</button>
+      <label for="count" class="sr-only">Anzahl</label>
+      <select name="count" id="count">{% for n in range(1, 8) %}<option value="{{ n }}">{{ plural(n, "Video", "Videos") }}</option>{% endfor %}</select>
+      <button class="primary" {% if running %}disabled{% endif %}>Erstellen</button>
     </form>
     <form method="post" action="/actions/check-public">
-      <button class="ghost" {% if running %}disabled{% endif %}>🔎 Sichtbarkeit prüfen</button>
+      <button class="ghost" {% if running %}disabled{% endif %}>Sichtbarkeit prüfen</button>
     </form>
   </div>
-  <p class="muted">Erstellen dauert ca. 2 Min. pro Video; danach erscheinen sie hier und in Telegram zur Freigabe.</p>
+  <p class="muted">Erstellen dauert ca. 2 Min. pro Video. Fertige Videos erscheinen sofort unten zur Freigabe (und in Telegram).</p>
 </div>
 
 {% if approved %}
-<h2>Freigegeben – bereit zum Hochladen</h2>
+<h2>Freigegeben – bereit zum Hochladen ({{ approved|length }})</h2>
 <div class="card">
-  <ul>{% for t in approved %}<li>#{{ t.id }} {{ (t.script or {}).get("title", t.title) }}</li>{% endfor %}</ul>
-  <form method="post" action="/actions/upload" class="row">
-    <label><input type="radio" name="when" value="termin" checked> nächster freier Termin</label>
-    <label><input type="radio" name="when" value="wunsch"> Wunschtermin
-      <input type="datetime-local" name="at" value="{{ default_at }}"></label>
-    <label><input type="radio" name="when" value="sofort"> sofort öffentlich</label>
-    <button class="primary" {% if running or upload_blocked %}disabled{% endif %}>📤 Alle {{ approved|length }} hochladen</button>
-  </form>
-  {% if upload_blocked %}<p class="warn">Upload gesperrt: {{ quota.reason }} (ein Upload braucht {{ upload_cost }} Einheiten, frei: {{ quota.free }}).</p>{% endif %}
-  <p class="muted">
+  <p>
     {% if upload_mode == "api" %}<span class="pill on">Upload per YouTube-API</span>
-      {% if api_public %}API-Uploads werden derzeit öffentlich (zuletzt von außen geprüft).{% else %}Ob API-Uploads öffentlich werden, ist noch nicht geprüft – nach dem Upload „Sichtbarkeit prüfen“.{% endif %}
+      {% if api_public %}API-Uploads werden derzeit öffentlich (von außen geprüft).{% else %}Ob API-Uploads öffentlich werden, ist noch nicht geprüft.{% endif %}
     {% else %}<span class="pill">Manuell über YouTube Studio</span> Am Termin-Tag kommt ein Upload-Paket per Telegram.{% endif %}
-    Wunschtermin gilt fürs erste Video, „sofort“ für alle.</p>
+  </p>
+  {% if upload_blocked %}<p class="warn">Upload gesperrt: {{ quota.reason }} (ein Upload braucht {{ upload_cost }} Einheiten, frei: {{ quota.free }}).</p>{% endif %}
+  {% for t in approved %}{% set s = t.script or {} %}
+  <div class="approved-row" id="t{{ t.id }}">
+    <video src="/media/{{ t.id }}.mp4" preload="metadata" muted class="thumb"></video>
+    <div style="flex:1;min-width:200px">
+      <b>#{{ t.id }} {{ s.get("title", t.title) }}</b>
+      <div class="muted">Quelle {{ source_date_label(t.published_at) }}</div>
+      <form method="post" action="/actions/upload-one" class="row" style="margin-top:6px">
+        <input type="hidden" name="topic_id" value="{{ t.id }}">
+        <label for="slot{{ t.id }}" class="sr-only">Termin</label>
+        <select name="slot" id="slot{{ t.id }}">
+          <option value="next">nächster freier Termin{% if free_slots %} ({{ free_slots[0] | local_time }}){% endif %}</option>
+          {% for slot in free_slots[1:] %}<option value="{{ slot }}">{{ slot | local_time }}</option>{% endfor %}
+          <option value="sofort">sofort öffentlich</option>
+        </select>
+        <button class="primary" {% if running or upload_blocked %}disabled{% endif %}>Hochladen</button>
+      </form>
+      <form method="post" action="/topics/{{ t.id }}/unapprove" style="margin-top:6px"><button class="ghost small">Freigabe zurücknehmen</button></form>
+    </div>
+  </div>
+  {% endfor %}
+  {% if approved|length > 1 %}
+  <form method="post" action="/actions/upload" class="row" style="margin-top:12px">
+    <input type="hidden" name="when" value="termin">
+    <button class="primary" {% if running or upload_blocked %}disabled{% endif %}>Alle {{ approved|length }} mit den nächsten freien Terminen hochladen</button>
+  </form>
+  {% endif %}
 </div>
 {% endif %}
 
 <h2>Warten auf Freigabe ({{ waiting|length }})</h2>
-{% for t in waiting %}{% set s = t.script or {} %}
-<div class="card topic">
+{% for t in waiting %}{% set s = t.script or {} %}{% set badges = warning_badges(t) %}
+<div class="card topic" id="t{{ t.id }}">
   <video src="/media/{{ t.id }}.mp4" controls preload="metadata"></video>
   <div>
+    {% if badges %}<div class="badges">{% for b in badges %}<span class="badge">⚠ {{ b }}</span>{% endfor %}</div>{% endif %}
     <h3 style="margin:0 0 6px">#{{ t.id }} {{ s.get("title", t.title) }}</h3>
-    <div class="muted">{{ t.source_name }} · <b>Quelle {{ source_date_label(t.published_at) }}</b> · <a href="{{ t.url }}" target="_blank" rel="noopener">Quelle öffnen</a> · {{ word_count(s.get("narration","")) }} Wörter</div>
+    <div class="muted">{{ t.source_name }} · <b>Quelle {{ source_date_label(t.published_at) }}</b> ·
+      <a href="{{ t.url }}" target="_blank" rel="noopener">Quelle öffnen</a> · {{ word_count(s.get("narration","")) }} Wörter
+      {% if t.status == "video" %} · <span class="pill">noch nicht in Telegram</span>{% endif %}</div>
     {% if t.note %}<p class="warn">⚠️ {{ t.note }}</p>{% endif %}
     <p>{{ s.get("narration","") }}</p>
-    <p class="muted">🔢 {% if s.get("date_label") %}[{{ s.date_label }}] {% endif %}{% for f in s.get("key_facts", []) %}{{ f.value }} = {{ f.label }}{% if not loop.last %} · {% endif %}{% endfor %}<br>
-       💶 {{ format_cost(t.cost_json, eur) }}</p>
+    <p class="muted">Grafik: {% if s.get("date_label") %}[{{ s.date_label }}] {% endif %}{% for f in s.get("key_facts", []) %}{{ f.value }} = {{ f.label }}{% if not loop.last %} · {% endif %}{% endfor %}<br>
+       Kosten: {{ format_cost(t.cost_json, eur) }}</p>
     <details><summary>Belege ({{ s.get("evidence", [])|length }})</summary>
       <ul>{% for e in s.get("evidence", []) %}<li><b>{{ e.claim }}</b><br><span class="muted">„{{ e.quote }}“</span></li>{% endfor %}</ul>
     </details>
-    <div class="row" style="margin-top:10px">
-      <form method="post" action="/topics/{{ t.id }}/approve"><button class="ok">✅ Freigeben</button></form>
-      <form method="post" action="/topics/{{ t.id }}/reject"><button class="bad">❌ Ablehnen</button></form>
-      <form method="post" action="/topics/{{ t.id }}/regenerate"><button class="ghost">🔄 Neu erzeugen</button></form>
+    <details><summary>YouTube-Titel, Beschreibung, Hashtags (bearbeiten)</summary>
+      <form method="post" action="/topics/{{ t.id }}/meta" class="stack">
+        <label>Titel <input name="title" maxlength="100" required value="{{ s.get('title', t.title) }}"></label>
+        <label>Beschreibung <textarea name="description" rows="4">{{ s.get("description", "") }}</textarea></label>
+        <label>Hashtags <input name="hashtags" value="{{ s.get('hashtags', [])|join(' ') }}"></label>
+        <p class="muted">Quelle, Bild-Credit und Standard-Hashtags werden beim Upload automatisch angehängt.</p>
+        <button class="ghost">Speichern</button>
+      </form>
+    </details>
+    <div class="row actions">
+      <form method="post" action="/topics/{{ t.id }}/approve"><button class="ok">Freigeben</button></form>
+      <form method="post" action="/topics/{{ t.id }}/reject"><button class="bad">Ablehnen</button></form>
+      <form method="post" action="/topics/{{ t.id }}/regenerate"><button class="ghost">Neu erzeugen</button></form>
     </div>
   </div>
 </div>
 {% else %}<p class="muted">Nichts offen.</p>{% endfor %}
 
-{% if in_work %}<h2>In Arbeit</h2><div class="card"><ul>{% for t in in_work %}<li>#{{ t.id }} {{ t.title }} – {{ t.status }}</li>{% endfor %}</ul></div>{% endif %}
+{% if in_work %}<h2>In Arbeit</h2><div class="card"><ul>{% for t in in_work %}<li>#{{ t.id }} {{ t.title }} – Skript fertig, Video folgt</li>{% endfor %}</ul></div>{% endif %}
 
 {% if failed %}
 <h2>Fehler ({{ failed|length }})</h2>
 {% for t in failed %}
-<div class="card"><b>#{{ t.id }} {{ t.title }}</b><p class="warn">{{ t.note }}</p>
+<div class="card" id="t{{ t.id }}"><b>#{{ t.id }} {{ t.title }}</b><p class="warn">{{ t.note }}</p>
   <div class="row">
-    <form method="post" action="/topics/{{ t.id }}/retry"><button class="ghost">↻ Erneut versuchen</button></form>
-    <form method="post" action="/topics/{{ t.id }}/regenerate"><button class="ghost">🔄 Neu erzeugen</button></form>
+    <form method="post" action="/topics/{{ t.id }}/retry"><button class="ghost">Erneut versuchen</button></form>
+    <form method="post" action="/topics/{{ t.id }}/regenerate"><button class="ghost">Neu erzeugen</button></form>
   </div></div>
 {% endfor %}
 {% endif %}
 
 <h2>Zuletzt hochgeladen</h2>
-<div class="card"><table>
-  <tr><th>#</th><th>Titel</th><th>Sichtbarkeit</th><th>Veröffentlicht / Termin</th><th>Links</th><th>Kosten</th></tr>
-  {% for t in uploaded %}<tr>
-    <td>{{ t.id }}</td><td>{{ (t.script or {}).get("title", t.title)[:70] }}</td>
-    <td>{% if t.yt_visibility == "öffentlich" %}<span class="pill on">öffentlich</span>{% elif t.yt_visibility == "gelöscht" %}<span class="pill off">gelöscht</span>{% elif t.yt_visibility %}<span class="pill">{{ t.yt_visibility }}</span>{% else %}<span class="muted">nicht geprüft</span>{% endif %}
+<div class="card table-wrap"><table>
+  <thead><tr><th>#</th><th>Titel</th><th>Sichtbarkeit</th><th>Veröffentlicht / Termin</th><th>Links</th><th>Kosten</th></tr></thead>
+  <tbody>
+  {% for t in uploaded %}<tr id="t{{ t.id }}">
+    <td data-label="#">{{ t.id }}</td><td data-label="Titel">{{ (t.script or {}).get("title", t.title) }}</td>
+    <td data-label="Sichtbarkeit">{% if t.yt_visibility == "öffentlich" %}<span class="pill on">öffentlich</span>{% elif t.yt_visibility == "gelöscht" %}<span class="pill off">gelöscht</span>{% elif t.yt_visibility %}<span class="pill">{{ t.yt_visibility }}</span>{% else %}<span class="muted">nicht geprüft</span>{% endif %}
       {% if t.yt_checked_at %}<br><span class="muted">geprüft {{ t.yt_checked_at | local_time }}</span>{% endif %}</td>
-    <td>{% if t.yt_published_at %}{{ t.yt_published_at | local_time }}{% elif t.publish_at %}geplant {{ t.publish_at | local_time }}{% else %}–{% endif %}</td>
-    <td>{% if t.youtube_id %}<a href="https://youtu.be/{{ t.youtube_id }}" target="_blank" rel="noopener">YouTube</a> · <a href="{{ studio_url.format(id=t.youtube_id) }}" target="_blank" rel="noopener">Studio</a>{% else %}{{ t.status }}{% endif %}</td>
-    <td class="muted">{% set c = format_cost(t.cost_json, eur) %}{{ "–" if c == "keine Angaben" else c.split(" (")[0] }}</td></tr>
+    <td data-label="Zeit">{% if t.yt_published_at %}{{ t.yt_published_at | local_time }}{% elif t.publish_at %}geplant {{ t.publish_at | local_time }}{% else %}–{% endif %}</td>
+    <td data-label="Links">{% if t.youtube_id %}<a href="https://youtu.be/{{ t.youtube_id }}" target="_blank" rel="noopener">YouTube</a> · <a href="{{ studio_url.format(id=t.youtube_id) }}" target="_blank" rel="noopener">Studio</a>{% else %}{{ t.status }}{% endif %}</td>
+    <td data-label="Kosten" class="muted">{% set c = format_cost(t.cost_json, eur) %}{{ "–" if c == "keine Angaben" else c.split(" (")[0] }}</td></tr>
   {% else %}<tr><td colspan="6" class="muted">Noch nichts.</td></tr>{% endfor %}
+  </tbody>
 </table></div>
 
 <h2>Letzte Jobs</h2>
-<div class="card"><table>
-  <tr><th>#</th><th>Job</th><th>Auslöser</th><th>Start</th><th>Ergebnis</th></tr>
+<div class="card table-wrap"><table>
+  <thead><tr><th>#</th><th>Job</th><th>Auslöser</th><th>Start</th><th>Dauer</th><th>Ergebnis</th></tr></thead>
+  <tbody>
   {% for j in jobs %}<tr>
-    <td><a href="/jobs/{{ j.id }}">{{ j.id }}</a></td><td><code>{{ j.args | args_label }}</code></td><td>{{ j.trigger }}</td>
-    <td>{{ j.started_at | local_time }}</td>
-    <td>{% if j.finished_at is none %}läuft …
+    <td data-label="#"><a href="/jobs/{{ j.id }}">{{ j.id }}</a></td><td data-label="Job">{{ j.args | job_label }}</td>
+    <td data-label="Auslöser">{{ "Zeitplan" if j.trigger == "zeitplan" else "Webinterface" }}</td>
+    <td data-label="Start">{{ j.started_at | local_time }}</td><td data-label="Dauer">{{ duration(j) }}</td>
+    <td data-label="Ergebnis">{% if j.finished_at is none %}läuft …
         {% elif j.result_status == "ok" %}✅ {{ j.result_summary }}
         {% elif j.result_status == "warn" %}⚠️ {{ j.result_summary }}
         {% elif j.result_status == "error" %}❌ {{ j.result_summary }}
-        {% elif j.returncode == 0 %}✅ (altes Format)
+        {% elif j.returncode == 0 %}✅ (vor der Ergebnis-Erfassung)
         {% else %}❌ Code {{ j.returncode }}{% endif %}</td></tr>
-  {% else %}<tr><td colspan="5" class="muted">Noch keine Jobs aus dem Webinterface.</td></tr>{% endfor %}
+  {% else %}<tr><td colspan="6" class="muted">Noch keine Jobs.</td></tr>{% endfor %}
+  </tbody>
 </table></div>
 {% endblock %}

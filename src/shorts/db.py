@@ -35,9 +35,9 @@ class Status(StrEnum):
 ALLOWED: dict[Status, set[Status]] = {
     Status.NEU: {Status.SKRIPT, Status.VERWORFEN, Status.FEHLER},
     Status.SKRIPT: {Status.VIDEO, Status.FEHLER},
-    Status.VIDEO: {Status.WARTET, Status.FEHLER},
+    Status.VIDEO: {Status.WARTET, Status.FREIGEGEBEN, Status.ABGELEHNT, Status.FEHLER},  # Web-Freigabe vor Telegram
     Status.WARTET: {Status.FREIGEGEBEN, Status.ABGELEHNT},
-    Status.FREIGEGEBEN: {Status.HOCHGELADEN, Status.PAKET, Status.FEHLER},
+    Status.FREIGEGEBEN: {Status.HOCHGELADEN, Status.PAKET, Status.FEHLER, Status.WARTET},  # WARTET = zurücknehmen
     Status.PAKET: {Status.HOCHGELADEN},
     Status.FEHLER: {Status.NEU, Status.SKRIPT, Status.VIDEO, Status.FREIGEGEBEN},  # Retry
     Status.HOCHGELADEN: set(),

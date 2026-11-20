@@ -27,7 +27,10 @@ class JobRunner:
 
     def running(self) -> dict | None:
         with self._lock:
-            return dict(self._current) if self._current else None
+            cur = dict(self._current) if self._current else None
+        if cur:
+            cur["step"] = progress(cur["kind"], cur.get("log_path"))
+        return cur
 
     def launch(self, kind: str, args: list[str], trigger: str) -> int | None:
         """Startet den Job; None, wenn schon einer läuft (die CLI sperrt zusätzlich per flock)."""
@@ -38,7 +41,7 @@ class JobRunner:
             self.log_dir.mkdir(parents=True, exist_ok=True)
             log_path = self.log_dir / f"{datetime.now():%Y%m%d-%H%M%S}-{kind}.log"
             job_id = self._db_factory().start_job(kind, args, trigger, str(log_path))
-            self._current = {"id": job_id, "kind": kind, "trigger": trigger,
+            self._current = {"id": job_id, "kind": kind, "trigger": trigger, "log_path": str(log_path),
                              "started": datetime.now().strftime("%H:%M:%S")}
         threading.Thread(target=self._run, args=(job_id, kind, args, log_path), daemon=True).start()
         return job_id
@@ -73,6 +76,29 @@ def read_result(path: Path, rc: int) -> tuple[str, str]:
     if rc != 0:
         return "error", data.get("summary") or f"Abbruch mit Code {rc} – siehe Log"
     return data.get("status", "ok"), data.get("summary", "fertig")
+
+
+PIPELINE_STEPS = [  # (Log-Merkmal, Anzeige) – Reihenfolge = Ablauf
+    ("shorts.sources", "1/5 Quellen abrufen"),
+    ("shorts.script", "2/5 Skript schreiben (Claude)"),
+    ("shorts.tts", "3/5 Stimme erzeugen"),
+    ("shorts.subtitles", "4/5 Untertitel & Hintergrund"),
+    ("shorts.backgrounds", "4/5 Untertitel & Hintergrund"),
+    ("shorts.render", "5/5 Video rendern"),
+]
+
+
+def progress(kind: str, log_path: str | None) -> str:
+    """Grober Fortschritt eines laufenden Jobs aus seinem Log."""
+    if kind != "pipeline" or not log_path or not Path(log_path).exists():
+        return ""
+    text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+    step = ""
+    for line in text.splitlines():
+        for marker, label in PIPELINE_STEPS:
+            if marker in line:
+                step = label
+    return step
 
 
 def tail(path: str | None, lines: int = 200) -> str:

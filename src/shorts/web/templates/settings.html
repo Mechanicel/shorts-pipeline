@@ -1,40 +1,51 @@
 {% extends "base.html" %}{% block title %}Zeitplan{% endblock %}
 {% block content %}
 <h1>Zeitplan &amp; Einstellungen</h1>
-<div class="flash err" style="background:#fff6d6;color:#6b5300">
-  Solange die alten systemd-Timer auf dem Server aktiv sind, den Zeitplan hier <b>nicht</b> einschalten – sonst laufen
-  Erstellen und Upload doppelt. Abschalten: <code>sudo systemctl disable --now shorts-pipeline.timer shorts-upload.timer</code>
-</div>
+<p class="muted">Der Zeitplan läuft im Webinterface. Die früheren systemd-Timer auf dem Server sind deaktiviert –
+  falls jemand sie wieder einschaltet, laufen Erstellen und Upload doppelt.</p>
+{% if balance %}<div class="flash err" style="background:#fff6d6;color:#6b5300">{{ balance }}</div>{% endif %}
 <form method="post" action="/settings">
   <div class="card">
-    <h2 style="margin-top:0">🎬 Videos erstellen</h2>
+    <h2 style="margin-top:0">Videos erstellen</h2>
     <label><input type="checkbox" name="pipeline_enabled" {% if sched.pipeline.enabled %}checked{% endif %}> automatisch erstellen</label>
     {% if next_runs.pipeline %}<span class="muted">· nächster Lauf {{ next_runs.pipeline }}</span>{% endif %}
-    <p class="row">An diesen Tagen:
-      {% for d in days %}<label><input type="checkbox" name="day_{{ d }}" {% if d in sched.pipeline.days %}checked{% endif %}> {{ day_labels[d] }}</label>{% endfor %}</p>
-    <p class="row">um <input type="time" name="pipeline_time" value="{{ sched.pipeline.time }}" required>
-       · Videos pro Lauf <input type="number" name="pipeline_limit" min="1" max="20" value="{{ sched.pipeline.limit }}" style="width:5em"></p>
-    <p class="muted">Pro Lauf fragt Claude bis zu {{ channel.max_new_topics_per_run }} Themen an; unpassende werden verworfen.</p>
+    <fieldset class="row" style="border:0;padding:0;margin:12px 0"><legend class="muted">An diesen Tagen:</legend>
+      {% for d in days %}<label><input type="checkbox" name="day_{{ d }}" {% if d in sched.pipeline.days %}checked{% endif %}> {{ day_labels[d] }}</label>{% endfor %}
+    </fieldset>
+    <p class="row"><label for="pipeline_time">um</label> <input type="time" id="pipeline_time" name="pipeline_time" value="{{ sched.pipeline.time }}" required>
+       <label for="pipeline_limit">Videos pro Lauf</label> <input type="number" id="pipeline_limit" name="pipeline_limit" min="1" max="20" value="{{ sched.pipeline.limit }}" style="width:5em"></p>
+    <p class="muted">Pro Lauf fragt Claude bis zu {{ channel.max_new_topics_per_run }} Themen an; unpassende und veraltete werden verworfen.</p>
   </div>
   <div class="card">
-    <h2 style="margin-top:0">📤 Hochladen</h2>
+    <h2 style="margin-top:0">Hochladen</h2>
     <label><input type="checkbox" name="upload_enabled" {% if sched.upload.enabled %}checked{% endif %}> täglich automatisch hochladen</label>
     {% if next_runs.upload %}<span class="muted">· nächster Lauf {{ next_runs.upload }}</span>{% endif %}
-    <p>um <input type="time" name="upload_time" value="{{ sched.upload.time }}" required>
+    <p class="row"><label for="upload_time">um</label> <input type="time" id="upload_time" name="upload_time" value="{{ sched.upload.time }}" required>
       <span class="muted">(YouTube-Kontingent wird um 09:00 zurückgesetzt)</span></p>
-    <p>Veröffentlichungstermine (eine Zeile pro Termin, z. B. <code>Mon 17:00</code>):</p>
-    <textarea name="publish_slots" rows="7" style="width:220px">{{ sched.publish_slots | join("\n") }}</textarea>
-    <p class="muted">Jedes freigegebene Video bekommt den nächsten freien Termin (mind. 2 h Vorlauf).</p>
+    <h3>Veröffentlichungstermine</h3>
+    <p class="muted">Jedes freigegebene Video bekommt den nächsten freien Termin (mind. 2 h Vorlauf). Zum Entfernen die Uhrzeit leeren.</p>
+    {% for day, t in slot_rows %}
+    <div class="row" style="margin-bottom:6px">
+      <label for="slot_day_{{ loop.index0 }}" class="sr-only">Wochentag</label>
+      <select name="slot_day_{{ loop.index0 }}" id="slot_day_{{ loop.index0 }}">
+        <option value="">–</option>
+        {% for d in days %}<option value="{{ d }}" {% if d == day %}selected{% endif %}>{{ day_labels[d] }}</option>{% endfor %}
+      </select>
+      <label for="slot_time_{{ loop.index0 }}" class="sr-only">Uhrzeit</label>
+      <input type="time" name="slot_time_{{ loop.index0 }}" id="slot_time_{{ loop.index0 }}" value="{{ t }}">
+    </div>
+    {% endfor %}
+    {% if preview %}<p class="muted">Nächste freie Termine: {% for p in preview %}{{ p | local_time }}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
   </div>
   <button class="primary">Speichern</button>
 </form>
 
 <div class="card" style="margin-top:28px;max-width:420px">
-  <h2 style="margin-top:0">🔑 Passwort ändern</h2>
-  <form method="post" action="/settings/password" class="row" style="flex-direction:column;align-items:stretch">
-    <input type="password" name="old" placeholder="Altes Passwort" required>
-    <input type="password" name="new" placeholder="Neues Passwort (mind. 10 Zeichen)" minlength="10" required>
-    <input type="password" name="new2" placeholder="Neues Passwort wiederholen" minlength="10" required>
+  <h2 style="margin-top:0">Passwort ändern</h2>
+  <form method="post" action="/settings/password" class="stack">
+    <label>Altes Passwort <input type="password" name="old" required autocomplete="current-password"></label>
+    <label>Neues Passwort (mind. 10 Zeichen) <input type="password" name="new" minlength="10" required autocomplete="new-password"></label>
+    <label>Neues Passwort wiederholen <input type="password" name="new2" minlength="10" required autocomplete="new-password"></label>
     <button>Ändern</button>
   </form>
   <p class="muted">Passwort vergessen? Auf dem Server: <code>docker compose run --rm job web-reset-password</code></p>

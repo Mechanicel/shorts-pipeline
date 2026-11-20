@@ -52,6 +52,19 @@ def next_free_slot(slots: list[str], taken: set[str], now: datetime, horizon_day
     raise RuntimeError(f"Kein freier Slot in den nächsten {horizon_days} Tagen")
 
 
+def upcoming_free_slots(slots: list[str], taken: set[str], now: datetime, n: int = 5) -> list[str]:
+    """Die nächsten n freien Termine (UTC-ISO) – für Dropdowns und Vorschau."""
+    out, blocked = [], set(taken)
+    while len(out) < n:
+        try:
+            slot = next_free_slot(slots, blocked, now)
+        except (RuntimeError, ValueError):
+            break
+        out.append(slot)
+        blocked.add(slot)
+    return out
+
+
 def quota_day(now: datetime) -> str:
     return now.astimezone(PACIFIC).date().isoformat()
 
@@ -168,12 +181,15 @@ def quota_status(settings: Settings, db: Database, now: datetime) -> dict:
 
 
 def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry_run: bool = False,
-                now: datetime | None = None, publish_at: str | None = None, immediate: bool = False) -> int:
+                now: datetime | None = None, publish_at: str | None = None, immediate: bool = False,
+                only: int | None = None) -> int:
     """publish_at (UTC-ISO) gilt nur für das erste Video der Warteschlange (Test eines Wunschtermins).
     immediate=True: alle Videos dieses Laufs sofort öffentlich, ohne Termin.
     Meldet ehrlich, wie viele von wie vielen hochgeladen wurden (result.report)."""
     now = now or datetime.now(timezone.utc)
     pending = sorted(db.by_status(Status.FREIGEGEBEN, channel.key), key=lambda t: (t.updated_at, t.id))
+    if only is not None:  # einzelnes Video (z. B. aus dem Webinterface mit eigenem Termin)
+        pending = [t for t in pending if t.id == only]
     if not pending:
         log.info("Keine freigegebenen Videos für %s", channel.key)
         report(WARN, "Nichts zu tun – keine freigegebenen Videos.")

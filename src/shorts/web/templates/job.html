@@ -1,8 +1,11 @@
 {% extends "base.html" %}{% block title %}Job #{{ job.id }}{% endblock %}
 {% block content %}
-<h1>Job #{{ job.id }}: {{ job.kind }}</h1>
-<p class="muted"><code>{{ job.args | args_label }}</code> · {{ job.trigger }} · Start {{ job.started_at | local_time }} ·
-  {% if job.finished_at %}Ende {{ job.finished_at | local_time }} · Code {{ job.returncode }}{% else %}läuft …{% endif %}</p>
-<pre>{{ log_text }}</pre>
+<h1>Job #{{ job.id }}: {{ job.args | job_label }}</h1>
+<p class="muted">{{ "Zeitplan" if job.trigger == "zeitplan" else "Webinterface" }} · Start {{ job.started_at | local_time }} ·
+  Dauer {{ duration(job) }}{% if job.finished_at %} · Exit-Code {{ job.returncode }}{% endif %}</p>
+{% if job.result_summary %}<p class="flash {{ 'ok' if job.result_status == 'ok' else 'err' }}">
+  {{ {"ok": "✅", "warn": "⚠️", "error": "❌"}.get(job.result_status, "") }} {{ job.result_summary }}</p>{% endif %}
+<pre>{{ log_html }}</pre>
+<p class="muted">Befehl: <code>{{ job.args | args_label }}</code></p>
 <a class="btn" href="/">← Übersicht</a>
 {% endblock %}

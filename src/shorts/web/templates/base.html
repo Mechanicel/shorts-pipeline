@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {% if running %}<meta http-equiv="refresh" content="8">{% endif %}
 <title>{% block title %}Shorts{% endblock %} · {{ channel.name }}</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230B1F3A'/%3E%3Cpath d='M12 9l11 7-11 7z' fill='%23FFD23F'/%3E%3C/svg%3E">
 <style>
   :root { --navy:#0B1F3A; --navy2:#13305a; --yellow:#FFD23F; --bg:#f4f6fa; --text:#14213d; --muted:#5b6782;
           --ok:#1f8a4c; --bad:#c0392b; --card:#fff; --line:#dde3ee; }
@@ -38,6 +39,27 @@
   pre { background:#0d1626; color:#d8e2f2; padding:12px; border-radius:8px; overflow:auto; max-height:70vh; font-size:.82rem; }
   .pill { display:inline-block; padding:2px 8px; border-radius:99px; background:#e6eaf2; font-size:.8rem; }
   .pill.on { background:#e3f5ea; color:#145c33; } .pill.off { background:#fbe5e2; color:#7d1f14; }
+  .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+  .badges { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+  .badge { background:#fff1c2; color:#6b4e00; border:1px solid #f2d27a; border-radius:6px; padding:3px 8px; font-size:.85rem; font-weight:600; }
+  .approved-row { display:flex; gap:14px; align-items:flex-start; padding:10px 0; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .thumb { width:72px; max-width:72px; border-radius:8px; }
+  .stack { display:flex; flex-direction:column; gap:8px; margin-top:8px; } .stack label { display:flex; flex-direction:column; gap:4px; font-weight:600; }
+  .stack input, .stack textarea { width:100%; }
+  button.small { padding:5px 10px; font-size:.85rem; }
+  .table-wrap { overflow-x:auto; }
+  select, input, textarea { max-width:100%; } .row > form { max-width:100%; }
+  .actions { margin-top:10px; }
+  @media (max-width:700px) {
+    main { padding:14px 10px 80px; }
+    header { gap:12px; } header form { margin-left:0; }
+    .topic video { max-width:100%; width:100%; }
+    .actions { position:sticky; bottom:0; background:var(--card); padding:10px 0; }
+    .actions button, .actions form { flex:1; } .actions button { width:100%; padding:14px; font-size:1.05rem; }
+    table, thead, tbody, tr, td { display:block; } thead { display:none; }
+    tr { border-bottom:1px solid var(--line); padding:8px 0; } td { border:0; padding:3px 0; }
+    td[data-label]::before { content:attr(data-label) ": "; font-weight:600; color:var(--muted); }
+  }
 </style>
 </head>
 <body>
@@ -52,7 +74,7 @@
 <main>
   {% if msg %}<div class="flash ok">{{ msg }}</div>{% endif %}
   {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
-  {% if running %}<div class="running">⏳ Läuft gerade: {{ running.kind }} (gestartet {{ running.started }}, {{ running.trigger }}) – Seite aktualisiert sich automatisch. <a href="/jobs/{{ running.id }}">Log ansehen</a></div>{% endif %}
+  <div role="status" aria-live="polite">{% if running %}<div class="running">⏳ Läuft gerade: {{ running.kind }}{% if running.step %} – Schritt {{ running.step }}{% endif %} (gestartet {{ running.started }}) · Seite aktualisiert sich automatisch · <a href="/jobs/{{ running.id }}">Log ansehen</a></div>{% endif %}</div>
   {% block content %}{% endblock %}
 </main>
 </body>
