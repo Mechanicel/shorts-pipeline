@@ -1,0 +1,35 @@
+x-common: &common
+  image: shorts-pipeline:latest
+  build: .
+  env_file:
+    - path: .env
+      required: false   # Dry-Run funktioniert ohne .env
+  environment:
+    TZ: Europe/Berlin
+  volumes:
+    - ./data:/app/data
+    - ./output:/app/output
+    - ./credentials:/app/credentials
+    - ./config:/app/config:ro
+    - ./assets:/app/assets:ro
+    - ./src:/app/src:ro          # Code-Änderungen ohne Rebuild
+    - ./tests:/app/tests:ro
+    - ./pytest.ini:/app/pytest.ini:ro
+
+services:
+  # Dauerhaft: Telegram-Review-Bot (verschickt neue Videos, nimmt Freigaben entgegen)
+  bot:
+    <<: *common
+    command: ["bot"]
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # Einmal-Jobs, gestartet via systemd-Timer:
+  #   docker compose run --rm job pipeline --channel de
+  #   docker compose run --rm job upload
+  job:
+    <<: *common
+    profiles: ["jobs"]
+    command: ["--help"]
