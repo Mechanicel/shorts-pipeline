@@ -13,8 +13,10 @@ from .costs import claude_cost
 
 log = logging.getLogger(__name__)
 
-MIN_WORDS, MAX_WORDS = 60, 75  # bei TTS_SPEED 1.15 ≈ 25–35 s (Analytics: Ø 26 s gesehen)
+MIN_WORDS, MAX_WORDS = 55, 68  # bei TTS_SPEED 1.25 ≈ 23–28 s (Analytics 11/2026: Ø 14 s von 28–30 s gesehen)
 HOOK_MAX_WORDS = 8
+# Version von Skript-Regeln + Gestaltung; wird pro Video gespeichert, damit Analytics Varianten vergleichen kann
+SCRIPT_STYLE = "v2-hook-frame0"
 
 
 class Evidence(BaseModel):
@@ -49,7 +51,9 @@ Hard rules, in this order of priority:
 1. Use only facts that are explicitly stated in the SOURCE TEXT. No outside knowledge, no \
 assumptions, no rounded or extrapolated numbers, no invented dates. If the text is vague, the \
 script stays vague or the topic is discarded.
-2. Discard the topic (discard=true, with a short reason) if any of these apply: the change already \
+2. Discard the topic (discard=true, with a short reason) if the core change is already covered by a topic in \
+ALREADY COVERED and this source adds no substantial new fact for viewers; then discard_reason starts with \
+"Dublette von #<id>". Also discard if any of these apply: the change already \
 took effect more than 4 weeks before TODAY and the source reports nothing new about it (old news); no concrete \
 change, deadline, price, amount or right for private individuals; purely political/diplomatic \
 news; the decisive facts (what/when/who) are missing or uncertain; the text is only a teaser.
@@ -57,11 +61,14 @@ news; the decisive facts (what/when/who) are missing or uncertain; the text is o
 quote is copied verbatim from the source text.
 
 Script shape (when not discarded):
-- The narration is {min_words}–{max_words} words (25–35 seconds spoken). Cut everything that is not essential.
+- The narration is {min_words}–{max_words} words (about 25 seconds spoken). Cut everything that is not essential.
 - The first sentence is the hook. Most viewers decide in the first second whether to swipe away, so:
   * max. {hook_max} words,
   * talks to the viewer as "du" (du/dein/dir/dich),
-  * names a concrete gain or loss for the viewer: money, a right, a deadline they could miss,
+  * does one of two things: names a concrete gain or loss for the viewer (money, a right, a deadline they \
+could miss), or opens a curiosity gap around a concrete thing the viewer knows ("Diese Nummer soll dir \
+bald helfen.", "Bei deiner Stromrechnung ändert sich etwas.") that the next sentence closes,
+  * is readable at a glance: it is shown as large text on the first frame, so no filler words,
   * does NOT open with a date or time phrase ("Ab dem 1. Januar ...", "2027 ...", "Seit heute ..."); \
 the date comes later in the script,
   * no "In diesem Video", no question the source cannot answer.
@@ -72,7 +79,11 @@ says "soll/sollen/kann/geplant", the hook keeps that meaning ("soll ... bekommen
 - The hook must not promise more than the source: if only some people are affected (age, income, \
 birth year, region), it must not sound like everyone is (e.g. "Kinder ab sechs" or "viele Kinder", \
 not "dein Kind" when not every child qualifies). Short and exact beats catchy and wrong.
-- Then: what exactly changes, from when, who is affected, what to do. Short spoken sentences, \
+- The second sentence delivers the payoff immediately: the core change with its most important number. \
+Viewers drop off right after the hook, so no background first: it must NOT start with the institution or \
+procedure ("Die Bundesregierung ...", "Das Kabinett ...", "Der Bundestag ...", "Laut ...", "Wie ... mitteilt"). \
+Put the legal status inside the sentence instead ("Geplant ist ...", "... soll ... sinken, so der Entwurf").
+- Then: from when, who is affected, what to do. Short spoken sentences, \
 numbers written as people say them, no abbreviations the voice would stumble over, no emojis, \
 no URLs.
 - Close with one short takeaway sentence that leads naturally back to the hook (the video loops). \
@@ -93,6 +104,9 @@ label "für neue Smart-Geräte") or leave key_facts with the single date-free nu
 
 USER_TEMPLATE = """\
 TODAY: {today}
+ALREADY COVERED ON THE CHANNEL (last 30 days):
+{covered}
+
 SOURCE ({source_name}, published {source_date}): {url}
 HEADLINE: {headline}
 
@@ -104,7 +118,7 @@ SOURCE TEXT:
 
 class ScriptWriter(Protocol):
     def write(self, *, headline: str, url: str, source_name: str, text: str,
-              source_date: str = "unbekannt", today: str = "") -> ShortScript: ...
+              source_date: str = "unbekannt", today: str = "", covered: str = "(none)") -> ShortScript: ...
 
 
 def word_count(text: str) -> int:
@@ -151,6 +165,16 @@ def hook_of(narration: str) -> str:
     return re.split(r"(?<=[.!?])\s+", narration.strip(), maxsplit=1)[0]
 
 
+_INSTITUTION_OPENING = re.compile(
+    r"^\W*(die\s+(bundes)?regierung|das\s+(bundes)?kabinett|der\s+bundestag|der\s+bundesrat|das\s+bundes\w*ministerium"
+    r"|die\s+ministerin|der\s+minister|laut\b|wie\s+.{0,40}\bmitteilt)", re.IGNORECASE)
+
+
+def second_sentence(narration: str) -> str:
+    parts = re.split(r"(?<=[.!?])\s+", narration.strip(), maxsplit=2)
+    return parts[1] if len(parts) > 1 else ""
+
+
 def hook_problems(narration: str) -> list[str]:
     hook = hook_of(narration)
     problems = []
@@ -160,6 +184,8 @@ def hook_problems(narration: str) -> list[str]:
         problems.append("Erster Satz spricht nicht mit 'du' an.")
     if _DATE_OPENING.match(hook):
         problems.append("Erster Satz beginnt mit einer Datums-/Zeitangabe.")
+    if _INSTITUTION_OPENING.match(second_sentence(narration)):
+        problems.append("Zweiter Satz beginnt mit Behörde/Verfahren statt mit der Kernänderung.")
     return problems
 
 
@@ -225,11 +251,12 @@ class ClaudeScriptWriter:
         return response.parsed_output
 
     def write(self, *, headline: str, url: str, source_name: str, text: str,
-              source_date: str = "unbekannt", today: str = "") -> ShortScript:
+              source_date: str = "unbekannt", today: str = "", covered: str = "(none)") -> ShortScript:
         self.spent = []  # Kosten je API-Aufruf dieses Skripts (auch bei Fehlschlag auslesbar)
         from datetime import date
         user = USER_TEMPLATE.format(source_name=source_name, url=url, headline=headline, text=text,
-                                    source_date=source_date, today=today or date.today().isoformat())
+                                    source_date=source_date, today=today or date.today().isoformat(),
+                                    covered=covered)
         script = self._call(user)
         problems = validate_script(script)
         if problems:  # ein Korrekturversuch
@@ -249,7 +276,7 @@ class SampleScriptWriter:
         self._sample = sample
 
     def write(self, *, headline: str, url: str, source_name: str, text: str,
-              source_date: str = "unbekannt", today: str = "") -> ShortScript:
+              source_date: str = "unbekannt", today: str = "", covered: str = "(none)") -> ShortScript:
         return ShortScript.model_validate(self._sample)
 
 

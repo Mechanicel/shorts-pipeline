@@ -15,18 +15,26 @@ from .db import Database, Status, Topic
 from .notify import notify
 from .backgrounds import pick_background
 from .render import RenderJob, probe_duration, render
-from .script import (ClaudeScriptWriter, SampleScriptWriter, ScriptWriter, script_to_json,
-                     unverified_numbers, unverified_quotes)
+from .script import (SCRIPT_STYLE, ClaudeScriptWriter, SampleScriptWriter, ScriptWriter, unverified_numbers,
+                     unverified_quotes)
 from .result import ERROR, OK, WARN, plural, report as report_result
 from .sources import collect_topics, fetch_article
-from .triage import Candidate, HaikuTriage, PassAllTriage, Triage, prefilter_reason
-from .subtitles import estimate_timings, split_words, whisper_timings
+from .triage import (Candidate, HaikuTriage, PassAllTriage, Triage, Verdict, covered_listing, prefilter_reason,
+                     similar_scripts)
+from .subtitles import estimate_timings, hook_window, split_words, whisper_timings
 from .tts import TTSEngine, apply_speed, get_tts
 
 log = logging.getLogger(__name__)
 
 STALE_AFTER_DAYS = 21       # neu-Themen, die so lange liegen bleiben, werden verworfen
 MAX_SOURCE_AGE_DAYS = 21    # Quelle (Artikeldatum) darf höchstens so alt sein
+
+
+def _score(topic: Topic) -> int:
+    try:
+        return int(topic.triage_score or 3)
+    except ValueError:
+        return 3
 
 
 def source_age_problem(date_str: str | None, today: datetime) -> str | None:
@@ -138,31 +146,40 @@ class Pipeline:
             else:
                 kept.append(t)
 
-        # Stufe 2: Vorauswahl mit günstigem Modell (nur Titel + Anriss, ein Aufruf)
+        # Stufe 2: Vorauswahl mit günstigem Modell (nur Titel + Anriss, ein Aufruf) inkl. Dubletten und Priorität
         to_screen = [t for t in kept if t.triage is None and not t.prev_status][: self.s.triage_max]
         if to_screen:
+            covered = covered_listing(self._covered())
             try:
-                verdicts = self.triage.screen([Candidate(t.id, t.title, t.summary or "") for t in to_screen])
+                verdicts = self.triage.screen([Candidate(t.id, t.title, t.summary or "") for t in to_screen], covered)
             except Exception as exc:  # Vorauswahl ist eine Sparmaßnahme – bei Ausfall alles durchlassen
                 log.warning("Vorauswahl fehlgeschlagen (%s) – Themen ohne Vorauswahl weiter", type(exc).__name__)
-                verdicts = {t.id: (True, "Vorauswahl ausgefallen") for t in to_screen}
+                verdicts = {t.id: Verdict(True, "Vorauswahl ausgefallen") for t in to_screen}
             finally:
                 spent = sum(x or 0.0 for x in getattr(self.triage, "spent", []))
                 report.cost_usd += spent
                 for t in to_screen:  # Kosten anteilig auf die geprüften Themen verteilen
                     self.db.add_cost(t.id, "vorauswahl", spent / len(to_screen))
             for t in to_screen:
-                ok, why = verdicts[t.id]
-                if ok:
-                    self.db.update_fields(t.id, triage=f"ok: {why}")
+                v = verdicts[t.id]
+                dup = v.duplicate_of
+                if dup in verdicts and not verdicts[dup].relevant:
+                    dup = None  # Verweis auf ein selbst verworfenes Item zählt nicht
+                if not v.relevant:
+                    self.db.update_fields(t.id, triage=v.reason, triage_score=str(v.score))
+                    self._discard(t, report, "Vorauswahl: kein Verbraucherbezug", f"Vorauswahl: {v.reason}")
+                elif dup is not None:
+                    self.db.update_fields(t.id, triage=f"Dublette von #{dup}: {v.reason}", triage_score=str(v.score))
+                    self._discard(t, report, "Dublette", f"Vorauswahl: Dublette von #{dup} ({v.reason})")
                 else:
-                    self.db.update_fields(t.id, triage=why)
-                    self._discard(t, report, "Vorauswahl: kein Verbraucherbezug", f"Vorauswahl: {why}")
+                    self.db.update_fields(t.id, triage=f"ok: {v.reason}", triage_score=str(v.score))
 
-        # Stufe 3: Skript mit dem großen Modell – nur für Themen, die die Vorauswahl bestanden haben
+        # Stufe 3: Skript mit dem großen Modell – nur für Themen, die die Vorauswahl bestanden haben,
+        # neu eingereihte zuerst, dann nach Priorität der Vorauswahl
         budget_calls = self.ch.max_new_topics_per_run
         ready = [self.db.get(t.id) for t in kept]
         ready = [t for t in ready if t.status == Status.NEU and (t.prev_status or (t.triage or "").startswith("ok"))]
+        ready.sort(key=lambda t: (t.prev_status is None, -_score(t)))
         for topic in ready:
             if budget_calls <= 0 or report.scripted >= target:
                 break
@@ -172,6 +189,9 @@ class Pipeline:
                 self._script_one(topic, report)
             except Exception as exc:
                 self._fail(topic, "Skript", exc, report)
+
+    def _covered(self, exclude: int | None = None) -> list[tuple[int, dict]]:
+        return [(t.id, t.script or {}) for t in self.db.covered_topics(self.ch.key) if t.id != exclude]
 
     def _script_one(self, topic: Topic, report: RunReport) -> None:
         text, date_str = topic.source_text, topic.published_at
@@ -187,24 +207,33 @@ class Pipeline:
             report.discarded += 1
             return
         try:
+            covered = self._covered(exclude=topic.id)
             script = self.writer.write(headline=topic.title, url=topic.url, source_name=topic.source_name,
-                                       text=text, source_date=(date_str or "unbekannt")[:10])
+                                       text=text, source_date=(date_str or "unbekannt")[:10],
+                                       covered=covered_listing(covered))
         finally:  # auch fehlgeschlagene/verworfene Versuche kosten Geld
             for usd in getattr(self.writer, "spent", []):
                 self.db.add_cost(topic.id, "claude", usd)
                 report.cost_usd += usd or 0.0
         if script.discard:
             self.db.update_fields(topic.id, source_text=text)
-            self._discard(topic, report, "Skript-Prüfung: kein passendes Thema", f"Claude: {script.discard_reason}")
+            dup = script.discard_reason.lower().startswith("dublette")
+            self._discard(topic, report, "Dublette" if dup else "Skript-Prüfung: kein passendes Thema",
+                          f"Claude: {script.discard_reason}")
             return
         warnings = []
+        data = script.model_dump()
+        if similar := similar_scripts(data, covered):
+            titles = {tid: s.get("title", "") for tid, s in covered}
+            warnings.append("Ähnliches Thema schon vorhanden: " + " | ".join(f"#{i} {titles[i]}" for i in similar))
         if missing := unverified_quotes(script, text):
             warnings.append("Zitate nicht wörtlich im Quelltext: " + " | ".join(missing))
         if numbers := unverified_numbers(script, text):
             warnings.append("Grafik-Zahlen nicht im Quelltext: " + " | ".join(numbers))
         note = "\n⚠️ ".join(warnings) or None
+        data["style"] = SCRIPT_STYLE  # Variante merken, um später Varianten in Analytics vergleichen zu können
         self.db.transition(topic.id, Status.SKRIPT, source_text=text,
-                           script_json=script_to_json(script), note=note)
+                           script_json=json.dumps(data, ensure_ascii=False, indent=2), note=note)
         report.scripted += 1
 
     def step_render(self, report: RunReport) -> None:
@@ -244,12 +273,13 @@ class Pipeline:
             pixabay_api_key=None if self.dry_run else self.s.pixabay_api_key,
             queries=self.ch.background_queries)
         self.db.update_fields(topic.id, background_credit=bg.credit)
+        hook, hook_end = hook_window(narration, timings)
         return render(RenderJob(
             audio=audio, timings=timings, title=script.get("overlay_title") or script["title"],
             source_url=topic.url, outro=self.ch.outro_text, out_dir=out_dir,
             background=bg.path, key_facts=script.get("key_facts") or [],
             date_label=script.get("date_label") or "",
-            badge="TESTVIDEO · DRY-RUN" if self.dry_run else None))
+            badge="TESTVIDEO · DRY-RUN" if self.dry_run else None, hook=hook, hook_end=hook_end))
 
     def _spend(self, topic_id: int, part: str, usd: float) -> None:
         self.db.add_cost(topic_id, part, usd)

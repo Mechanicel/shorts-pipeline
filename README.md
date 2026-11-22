@@ -126,12 +126,14 @@ Der Bot läuft per `restart: unless-stopped` dauerhaft (`docker compose up -d bo
 ## Videos: Inhalt und Gestaltung
 
 - **Themenauswahl:** Vorfilter (Titel-Begriffe in `channels.yaml`, kostenlos) → Vorauswahl mit Claude Haiku
-  (nur Titel + Anriss, Bruchteile eines Cents) → Datumsprüfung → erst dann das Skript mit Opus.
-- **Skript:** 60–75 Wörter. Erster Satz max. 8 Wörter, du-Ansprache, konkreter Nutzen/Verlust, keine
+  (nur Titel + Anriss, Bruchteile eines Cents; erkennt auch Dubletten zu schon behandelten Themen und sortiert
+  nach Priorität) → Datumsprüfung → erst dann das Skript mit Opus (verwirft ebenfalls Dubletten). Skripte, die
+  einem vorhandenen Thema ähneln, bekommen den Hinweis „Mögliche Dublette“ in Webinterface und Telegram.
+- **Skript:** 55–68 Wörter (≈ 25 s). Zweiter Satz nennt sofort die Kernänderung. Erster Satz max. 8 Wörter, du-Ansprache, konkreter Nutzen/Verlust, keine
   Datums-Einleitung, Rechtsstatus exakt (geplant ≠ beschlossen). Jede Zahl braucht ein wörtliches Zitat aus
   der Quelle; der Code prüft Zitate und Grafik-Zahlen automatisch und warnt in Telegram.
-- **Bild:** Faktenkarten (Navy `#0B1F3A`, Gelb `#FFD23F`, Montserrat) mit Kernzahl ab Frame 0, kleine Titelbox
-  ab 1,2 s, Untertitel mit hervorgehobenem Wort, keine Endkarte (sauberer Loop; Quelle steht in der Beschreibung).
+- **Bild:** Ab Frame 0 steht der erste Satz (Hook) groß als Tafel im Bild, danach Faktenkarten (Navy `#0B1F3A`,
+  Gelb `#FFD23F`, Montserrat) mit den Kernzahlen und eine kleine Titelbox, Untertitel mit hervorgehobenem Wort, keine Endkarte (sauberer Loop; Quelle steht in der Beschreibung).
 - **Hintergrund:** eigene Clips in `assets/backgrounds/` → Pixabay (mit `PIXABAY_API_KEY`; 24-h-Suchcache,
   Download statt Hotlink, max. 3 neue Clips/Lauf, Credit automatisch in der Beschreibung) → selbst generierte
   Animation. Kein fremdes Gameplay (Urheberrecht).

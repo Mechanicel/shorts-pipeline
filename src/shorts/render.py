@@ -30,6 +30,8 @@ class RenderJob:
     badge: str | None = None
     key_facts: list[dict] = field(default_factory=list)
     date_label: str = ""
+    hook: str = ""          # erster Satz als Tafel ab Frame 0
+    hook_end: float = 0.0
 
 
 def probe_duration(path: Path) -> float:
@@ -97,12 +99,12 @@ def render(job: RenderJob) -> Path:
     total = round(speech + TAIL_SECONDS, 2)
     ass = build_ass(timings=job.timings, title=job.title, source_label=source_label(job.source_url),
                     outro=job.outro, total_duration=total, badge=job.badge,
-                    end_card_seconds=0)
+                    end_card_seconds=0, hook=job.hook, hook_end=job.hook_end)
     ass_path = job.out_dir / "subs.ass"
     ass_path.write_text(ass, encoding="utf-8")
     out_path = (job.out_dir / "short.mp4").resolve()
-    # Erste Karte ab Frame 0, letzte bis zum letzten Frame → Kernzahl sofort sichtbar, nahtloser Loop
-    cards = build_cards(job.key_facts, job.date_label, job.out_dir, 0.0, total)
+    # Mit Hook-Tafel: Karten ab Ende des Hooks; ohne: erste Karte ab Frame 0. Letzte bis zum letzten Frame (Loop).
+    cards = build_cards(job.key_facts, job.date_label, job.out_dir, job.hook_end if job.hook else 0.0, total)
     cmd = build_ffmpeg_cmd(job, ass_path, out_path, total, cards)
     log.info("Rendere %s (%.1fs, Hintergrund: %s)", out_path, total, job.background or "Verlauf")
     # cwd = out_dir, damit der subtitles-Filter den Dateinamen ohne Escaping findet

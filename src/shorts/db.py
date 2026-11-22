@@ -11,7 +11,7 @@ import logging
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Iterator
@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS topics (
     yt_checked_at TEXT,
     yt_published_at TEXT,            -- tatsächlicher Veröffentlichungszeitpunkt laut YouTube
     triage        TEXT,              -- Ergebnis der Vorauswahl (Begründung), NULL = noch nicht geprüft
+    triage_score  TEXT,              -- Priorität 1–5 aus der Vorauswahl (höher = zuerst ans Skript-Modell)
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
     UNIQUE(channel, url)
@@ -137,6 +138,7 @@ class Topic:
     yt_checked_at: str | None
     yt_published_at: str | None
     triage: str | None
+    triage_score: str | None
     created_at: str
     updated_at: str
 
@@ -166,7 +168,7 @@ class Database:
     def _migrate(self) -> None:
         """Fehlende Spalten bei bestehenden Datenbanken ergänzen (nur additive Änderungen)."""
         wanted = {"topics": ("background_credit", "cost_json", "yt_visibility", "yt_checked_at", "yt_published_at",
-                             "triage"),
+                             "triage", "triage_score"),
                   "job_runs": ("result_status", "result_summary")}
         # Alte Einheiten-Zählung (1.600 je Upload) einmalig in Upload-Anzahl übernehmen
         if not self._conn.execute("SELECT 1 FROM upload_counts LIMIT 1").fetchone():
@@ -302,6 +304,18 @@ class Database:
     def get_job(self, job_id: int) -> dict[str, Any] | None:
         row = self._conn.execute("SELECT * FROM job_runs WHERE id=?", (job_id,)).fetchone()
         return dict(row) if row else None
+
+    COVERED = (Status.SKRIPT, Status.VIDEO, Status.WARTET, Status.FREIGEGEBEN, Status.PAKET, Status.HOCHGELADEN)
+
+    def covered_topics(self, channel: str, days: int = 30) -> list[Topic]:
+        """Themen mit fertigem Skript der letzten N Tage (für die Dubletten-Prüfung); gelöschte zählen nicht."""
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+        marks = ",".join("?" * len(self.COVERED))
+        rows = self._conn.execute(
+            f"SELECT * FROM topics WHERE channel=? AND status IN ({marks}) AND script_json IS NOT NULL "
+            "AND COALESCE(yt_visibility,'') != 'gelöscht' AND updated_at >= ? ORDER BY id",
+            (channel, *self.COVERED, since))
+        return [Topic.from_row(r) for r in rows]
 
     def recent_topics(self, statuses: list[Status], limit: int = 30) -> list[Topic]:
         marks = ",".join("?" * len(statuses))

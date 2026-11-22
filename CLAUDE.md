@@ -30,7 +30,7 @@ eigenen Quellen → neuer Eintrag in `config/channels.yaml`, eigene `credentials
 | `config.py` | `.env` → `Settings`, `config/channels.yaml` → `ChannelConfig` (Quellen, Stimme, Slots, Limits) |
 | `db.py` | SQLite (`data/pipeline.sqlite3`, WAL) + Status-Maschine mit erlaubten Übergängen, Quota-Tabelle |
 | `sources.py` | RSS (feedparser) + HTML-Linklisten (Regex), URL-Normalisierung, Artikeltext via trafilatura |
-| `triage.py` | Vorauswahl vor dem teuren Modell: Vorfilter per `title_blocklist` (kostenlos), dann Claude Haiku 5.5 (`ANTHROPIC_TRIAGE_MODEL`, ein Aufruf für bis zu `TRIAGE_MAX`=30 Themen, nur Titel+Anriss, im Zweifel durchlassen). Ergebnis in Spalte `triage`; nur `ok`-Themen gehen an Opus |
+| `triage.py` | Vorauswahl vor dem teuren Modell: Vorfilter per `title_blocklist` (kostenlos), dann Claude Haiku 5.5 (`ANTHROPIC_TRIAGE_MODEL`, ein Aufruf für bis zu `TRIAGE_MAX`=30 Themen, nur Titel+Anriss, im Zweifel durchlassen). Erkennt Dubletten zu Themen der letzten 30 Tage (`duplicate_of`) und vergibt Priorität 1–5 (`triage_score`, Opus-Reihenfolge). `similar_scripts()` = KI-freie Dubletten-Warnung auf fertigen Skripten. Nur `ok`-Themen gehen an Opus |
 | `script.py` | Claude (`messages.parse` + Pydantic `ShortScript`, Modell/Effort aus `.env`; kein Refusal-Fallback – Ablehnung = Thema verworfen). Validierung 70–110 Wörter, 1 Korrekturversuch. Belege (`evidence`) mit wörtlichen Zitaten → `unverified_quotes()` prüft gegen Quelltext |
 | `tts.py` | `TTSEngine`-Protocol; `OpenAITTS`, `EspeakTTS` (Dry-Run). Piper/ElevenLabs: neue Klasse + `get_tts()` |
 | `subtitles.py` | Wort-Timings (Standard: Whisper-Wortzeitstempel; `SUBTITLE_TIMING=estimate` als kostenlose Schätzung), Chunking, ASS-Datei (Titel, Untertitel mit gelbem aktivem Wort, Endkarte mit Quelle) |
@@ -77,8 +77,13 @@ docker compose up -d bot
 ## Retention-Regeln (aus ersten Analytics: 74 % wischen weg, Ø 26 von 47 s)
 - Hook: max. 8 Wörter, du-Ansprache, konkreter Nutzen/Verlust, keine Datums-Einleitung (`hook_problems()`),
   Rechtsstatus exakt (soll/kann/geplant bleibt erhalten), nicht mehr Betroffene versprechen als die Quelle.
-- Skript 60–75 Wörter → 25–35 s. Erste Faktenkarte ab Frame 0, Titelbox klein ab 1,2 s, keine Endkarte
-  (Quelle nur in der Beschreibung), letzte Karte bis zum letzten Frame → sauberer Loop.
+- Skript 55–68 Wörter → ≈ 25 s. Hook als große Tafel ab Frame 0 (Gelb auf Navy) bis Satzende (mind. 1,6 s),
+  währenddessen keine Wort-Untertitel/Titelbox; danach Faktenkarten, letzte bis zum letzten Frame → Loop.
+  Zweiter Satz liefert sofort die Kernänderung (kein „Die Bundesregierung …“-Einstieg, `hook_problems()`).
+  Keine Endkarte (Quelle nur in der Beschreibung). Stil-Version steht als `style` im script_json (`SCRIPT_STYLE`).
+- Analytics 22.11. (8 Shorts): nur 14–29 % „angesehen statt weggewischt“, Abfall bei ~4,5–5 s (nach dem Hook),
+  Ø ~50 % gesehen. Beste: 116 117 (Neugier-Hook „Diese Nummer …“), Unterhaltsvorschuss, DAZN. Publikum v. a. 55+.
+  Doppelte Stromsteuer-Videos bekamen ~0 Reichweite → Dubletten-Schutz. Nach ~2 Wochen v1 vs. v2 vergleichen.
 - Kosten je Video in der Telegram-Review (`costs.py`): Claude exakt aus Tokens, TTS/Whisper geschätzt.
 
 ## Pixabay-Regeln (verbindlich)
@@ -108,6 +113,9 @@ docker compose up -d bot
 - → `check-public` nach Terminen weiter beobachten; bei Sperren `UPLOAD_MODE=manual`. Audit trotzdem beantragen.
 
 **Themenauswahl (seit 20.11. abends):** Ablauf Vorfilter → Haiku-Vorauswahl → Datumsprüfung → Opus-Skript.
+Seit 22.11.: Dubletten-Schutz (URL-Dedupe reichte nicht – mehrere Artikel zum selben Kabinettspaket ergaben
+4× Stromsteuer). Haiku und Opus sehen die Liste der Themen der letzten 30 Tage; Opus verwirft mit
+„Dublette von #…“; Skripte mit ähnlichen Inhaltswörtern bekommen einen Warnhinweis.
 Probelauf: 30 Themen für 0,12 Cent, 19 durchgelassen. Leere Läufe melden „Kein Video: N Themen geprüft und
 verworfen (2× Vorfilter, …)“ plus Begründungen im Job-Log.
 

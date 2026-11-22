@@ -76,7 +76,8 @@ def _script(**over) -> ShortScript:
 
 def test_beispielskript_ist_gueltig() -> None:
     s = _script()
-    assert 60 <= word_count(s.narration) <= 75
+    from shorts.script import MAX_WORDS, MIN_WORDS
+    assert MIN_WORDS <= word_count(s.narration) <= MAX_WORDS
     assert validate_script(s) == []
 
 

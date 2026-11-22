@@ -121,18 +121,24 @@ Style: Caption,{FONT},104,&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,0,0,0,0,10
 Style: Title,{FONT_TITLE},56,&H00FFFFFF,&H00FFFFFF,&H00000000,&H003A1F0B,0,0,0,0,100,100,0,0,3,14,0,8,120,120,300,1
 Style: Source,{FONT_TITLE},54,&H00FFFFFF,&H00FFFFFF,&H00000000,&H003A1F0B,0,0,0,0,100,100,0,0,3,16,0,2,90,90,560,1
 Style: Outro,{FONT},64,&H003FD2FF,&H003FD2FF,&H00000000,&H96000000,0,0,0,0,100,100,0,0,1,6,3,5,90,90,0,1
+Style: Hook,{FONT},104,&H003FD2FF,&H003FD2FF,&H003A1F0B,&H003A1F0B,0,0,0,0,100,100,0,0,3,26,0,5,110,110,0,1
 Style: Badge,{FONT_TITLE},40,&H00FFFFFF,&H00FFFFFF,&H00000000,&H000000C8,0,0,0,0,100,100,0,0,3,12,0,7,50,50,80,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
-TITLE_DELAY = 1.2  # Sekunden, bevor die Titelbox erscheint
+TITLE_DELAY = 1.2  # Sekunden, bevor die Titelbox erscheint (ohne Hook-Tafel)
+HOOK_MIN_SECONDS = 1.6  # Hook-Tafel steht mindestens so lange (Lesezeit), auch wenn der Satz kürzer ist
+HOOK_Y = 640
 HIGHLIGHT = "&H003FD2FF&"  # Kanal-Gelb #FFD23F (ASS: BGR)
 
 
 def build_ass(*, timings: list[WordTiming], title: str, source_label: str, outro: str,
-              total_duration: float, end_card_seconds: float = 3.5, badge: str | None = None) -> str:
+              total_duration: float, end_card_seconds: float = 3.5, badge: str | None = None,
+              hook: str = "", hook_end: float = 0.0) -> str:
+    """hook/hook_end: erster Satz als große Tafel ab Frame 0 (Analytics: Wegwischen in der ersten Sekunde).
+    Solange die Tafel steht, laufen keine Wort-Untertitel und keine Titelbox."""
     lines: list[str] = [HEADER]
 
     def ev(start: float, end: float, style: str, text: str, layer: int = 0) -> None:
@@ -142,24 +148,29 @@ def build_ass(*, timings: list[WordTiming], title: str, source_label: str, outro
 
     # Titel: oben, das ganze Video über (mit kurzem Einblenden)
     # Titel klein und erst nach TITLE_DELAY: Frame 0 gehört der Kernzahl
-    if total_duration > TITLE_DELAY:
-        ev(TITLE_DELAY, total_duration, "Title", r"{\fad(300,0)}" + ass_escape(title.upper()), layer=1)
+    title_start = hook_end if hook else TITLE_DELAY
+    if hook:
+        ev(0, hook_end, "Hook", rf"{{\pos(540,{HOOK_Y})\fad(0,150)}}" + ass_escape(hook.upper()), layer=3)
+    if total_duration > title_start:
+        ev(title_start, total_duration, "Title", r"{\fad(300,0)}" + ass_escape(title.upper()), layer=1)
 
     # Untertitel: Wortgruppen, aktives Wort gelb hervorgehoben, leichter Pop-Effekt pro Gruppe
     for chunk in chunk_words(timings):
+        if hook and chunk[-1].end <= hook_end + 0.01:
+            continue  # steht schon groß auf der Hook-Tafel
         chunk_end = min(chunk[-1].end, end_card_start) if (outro and end_card_seconds > 0) else chunk[-1].end
         if chunk[0].start >= chunk_end:
             continue
         for i, wt in enumerate(chunk):
             seg_end = min(chunk[i + 1].start if i + 1 < len(chunk) else chunk_end, chunk_end)
-            if seg_end <= wt.start:
+            if seg_end <= wt.start or (hook and seg_end <= hook_end):
                 continue
             parts = []
             for j, w in enumerate(chunk):
                 word = ass_escape(w.word.upper())
                 parts.append(f"{{\\c{HIGHLIGHT}}}{word}{{\\c&H00FFFFFF&}}" if j == i else word)
             pop = r"{\fscx92\fscy92\t(0,80,\fscx100\fscy100)}" if i == 0 else ""
-            ev(wt.start, seg_end, "Caption", r"{\pos(540,1290)}" + pop + " ".join(parts), layer=2)
+            ev(max(wt.start, hook_end if hook else 0.0), seg_end, "Caption", r"{\pos(540,1290)}" + pop + " ".join(parts), layer=2)
 
     # Endkarte (optional): Quellenhinweis + Outro. Standard: keine – Quelle steht in der Beschreibung,
     # das Video endet direkt nach dem letzten Wort und loopt sauber.
@@ -171,3 +182,13 @@ def build_ass(*, timings: list[WordTiming], title: str, source_label: str, outro
     if badge:
         ev(0, total_duration, "Badge", ass_escape(badge), layer=4)
     return "\n".join(lines) + "\n"
+
+
+def hook_window(narration: str, timings: list[WordTiming]) -> tuple[str, float]:
+    """Erster Satz und Zeitpunkt, bis zu dem die Hook-Tafel steht (Ende des Satzes, mind. HOOK_MIN_SECONDS)."""
+    import re
+    hook = re.split(r"(?<=[.!?])\s+", narration.strip(), maxsplit=1)[0]
+    n = len(split_words(hook))
+    if not timings or n == 0 or n >= len(timings):
+        return "", 0.0
+    return hook, max(timings[n - 1].end, HOOK_MIN_SECONDS)

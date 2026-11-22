@@ -78,6 +78,8 @@ def warning_badges(topic, today=None) -> list[str]:
             badges.append("Zitat nicht wörtlich belegt")
         if "Grafik-Zahlen" in topic.note:
             badges.append("Zahl nicht im Quelltext")
+        if "Ähnliches Thema" in topic.note:
+            badges.append("Mögliche Dublette")
     if topic.published_at:
         age = ((today or date.today()) - datetime.fromisoformat(topic.published_at[:10]).date()).days
         if age > 7:
