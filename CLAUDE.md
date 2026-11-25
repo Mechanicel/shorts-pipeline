@@ -57,8 +57,8 @@ Status: `neu → skript → video → wartet_auf_freigabe → freigegeben → ho
 Dry-Run: eigene DB `data/dryrun.sqlite3` + `output/dryrun/`, wird pro Lauf zurückgesetzt; Beispieldaten in
 `sample_data.py` (fiktiv, Video mit „TESTVIDEO“-Badge); espeak statt OpenAI, kein Claude-Aufruf.
 
-Außerdem: `auth_youtube.py` (Repo-Root, läuft auf dem Laptop des Betreibers), `deploy/systemd/*` mit Platzhaltern
-`__USER__`/`__DIR__` (eingesetzt von `deploy/install_timers.sh`), `deploy/notify_failure.sh` (OnFailure → Telegram via curl).
+Außerdem: `auth_youtube.py` (Repo-Root, läuft auf dem Laptop des Betreibers), `deploy/setup_host.sh` (Host-Einrichtung),
+`deploy/ui_check.sh` (UI-Prüfung).
 
 ## Befehle
 ```bash
@@ -124,7 +124,7 @@ docker compose up -d bot
 
 ## Stand (2026-11-25)
 **Zeitsteuerung:** nur noch der Zeitplan im Webinterface (APScheduler, `schedule_<kanal>` in `app_settings`).
-systemd-Timer sind deaktiviert (Units liegen noch in `deploy/`). Aktiv: Sichtbarkeitsprüfung täglich 12:00.
+Keine systemd-Timer mehr (Units am 25.11. aus dem Repo entfernt, auf dem Host deaktiviert). Aktiv: Sichtbarkeitsprüfung täglich 12:00.
 Erstellen und Upload sind im Web aus → der Betreiber startet sie von Hand. Dienste: `bot`, `web` (Port 8080).
 `UPLOAD_MODE=api`, `TTS_SPEED=1.25`, Pixabay aktiv. Statusbericht: `docs/STATUS.md`.
 

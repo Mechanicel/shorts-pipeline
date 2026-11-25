@@ -2,6 +2,16 @@
 
 Stand: 25.11.2026, geprüft an Code, git, SQLite-DB, Docker und Job-Logs auf dem Server. Kanal: „Was ändert sich für dich?“ (DE).
 
+## Nachtrag 25.11.2026 abends
+
+| Thema | Stand | Commit |
+|---|---|---|
+| Webinterface neu | sieben Seiten mit je einer Aufgabe: Heute · Freigabe · Videos · Statistik · Recherche · Jobs · Einstellungen. „Heute“ passt auf 1440×900, Badges an Freigabe/Jobs, einheitliches Design (`docs/ui/DESIGN.md`, Prüfskript `deploy/ui_check.sh`) | 91d005a |
+| Alte Zeitsteuerung | systemd-Units, `install_timers.sh` und `notify_failure.sh` aus dem Repo entfernt. Einzige Zeitsteuerung ist der Web-Zeitplan; Fehler meldet der Web-Job-Runner per Telegram. Units auf dem Host: siehe unten | dieser Commit |
+| Zahlen | 24 hochgeladen: 12 öffentlich, 5 privat/geplant, 7 gelöscht. Davon 2 im Stil v3 (#2936 öffentlich, #98 geplant 25.11.) | – |
+| Vorrat | geplant bis **29.11.** (#96, #12, #97, #99) → ab 30.11. leer, wenn nichts nachkommt | – |
+| Zu prüfen | #2936 (v3, Corona-Impfung): Punkt 2 als „in Kraft“ markiert, Beleg sagt „sollen … liegen“. Die Pipeline hat es gemeldet, Entscheidung beim Betreiber | – |
+
 ## Nachtrag 25.11.2026 nachmittags (nach diesem Bericht umgesetzt)
 
 | Thema | Stand | Commit |
@@ -64,7 +74,7 @@ Alle 20 Commits stammen vom 20.–22.11.2026.
 | `manual.py` | manueller Modus: Upload-Paket per Telegram |
 | `publiccheck.py` | Sichtbarkeit von außen (oEmbed/playability): öffentlich, privat oder gelöscht → DB |
 | `costs.py` / `result.py` / `notify.py` | Kosten pro Video, strukturierte Job-Ergebnisse, Telegram-Text |
-| `web/` | FastAPI-UI (Login, Übersicht, Einstellungen, Jobs), APScheduler-Zeitplan, Job-Runner |
+| `web/` | FastAPI-UI (Login; seit 91d005a sieben Seiten, s. Nachtrag), APScheduler-Zeitplan, Job-Runner |
 
 ### Ablauf eines Durchgangs
 
@@ -86,7 +96,7 @@ Alle 20 Commits stammen vom 20.–22.11.2026.
 | Container `bot` (Telegram) | läuft (Up 2 days) |
 | Container `web` (Port 8080) | läuft (Up 2 days) |
 | Container `job` | nur für Einmal-Läufe (profile jobs) |
-| systemd `shorts-pipeline.timer`, `shorts-upload.timer` | installiert, **deaktiviert** |
+| systemd `shorts-pipeline.timer`, `shorts-upload.timer` | deaktiviert; seit dem Abend nicht mehr im Repo |
 | Web-Zeitplan „Erstellen“ | **aus** (eingestellt: So 06:00, 5 Videos) |
 | Web-Zeitplan „Upload“ | **aus** (eingestellt: täglich 09:30) |
 | Web-Zeitplan „Sichtbarkeit prüfen“ | an, täglich 12:00 (nächster Lauf 26.11. 12:00) |
@@ -226,7 +236,7 @@ Felder der strukturierten Ausgabe: discard, discard_reason, title (max. 70 Zeich
 | Exit-Codes bei check-public | erledigt | Befund = warn mit Exit 0, nur technische Fehler ≠ 0 | 999cf0c |
 | Freigabe-Karte: Quelldatum, Titel/Beschreibung editierbar, Warn-Badges | erledigt | dazu seit v2 der Hinweis „Mögliche Dublette“ | 0849be9 |
 | Job erst fertig, wenn Video zur Freigabe bereit | erledigt (anders gelöst) | Fortschritt pro Schritt im Banner; Videos sind schon vor dem Telegram-Versand freigebbar | 0849be9 |
-| Einstellungen: systemd-Timer weg, strukturierte Termine | teilweise | Termine strukturiert, Timer deaktiviert, aber die Units sind noch installiert und im Repo (`deploy/`) | 0849be9 |
+| Einstellungen: systemd-Timer weg, strukturierte Termine | teilweise | Termine strukturiert, Timer deaktiviert, Units aus dem Repo entfernt (abends) | 0849be9 |
 | Mobil, 404-Seiten, CSRF, Security-Header, /media nur mit Login | teilweise | Mobil und 404/500 erledigt; /media nur mit Login, aber per 303-Redirect statt 401; **CSRF-Token und Security-Header (CSP, nosniff, Referrer-Policy) fehlen**, Meldungen noch über `?msg=` | 0849be9 |
 
 ## 6. Zahlen aus der DB
@@ -337,15 +347,15 @@ check-public meldet `warn`, weil die 6 gelöschten Videos als Befund zählen. Da
 
 - **Vergleich v1 gegen v2:** Die Stil-Version wird gespeichert, ausgewertet ist noch nichts. Seit 23.11. sind 5 v2-Videos hochgeladen, davon ist bisher eines öffentlich (#18).
 - **P2 aus dem Testbericht:** CSRF, Security-Header, Meldungen über die Session statt `?msg=`, `/media` mit 401, Seiten „Videos“ und „Themen“, gespeicherter Ablehnungsgrund.
-- **Alte Zeitsteuerung:** Die systemd-Units sind noch installiert, und es gibt zwei Mechanismen zur Zeitsteuerung.
+- **Alte Zeitsteuerung:** erledigt bis auf das Löschen der deaktivierten Unit-Dateien auf dem Host (sudo).
 - **YouTube-Audit:** offen, Uploads funktionieren aber auch ohne.
 
 ### Top 5 technische Schulden
 
 1. **Analytics nur von Hand** über die KI in YouTube Studio. Es gibt keinen API-Import, und eine Rückkopplung zu Hook, Stil und Thema ist nicht automatisierbar.
-2. **Sicherheit des Webinterface:** kein CSRF-Schutz, keine Security-Header. Es ist nur lokal erreichbar, also ein geringes Risiko, aber offen.
+2. **Sicherheit des Webinterface:** kein CSRF-Schutz; an Headern nur `X-Frame-Options` und `Cache-Control` (seit 91d005a). Es ist nur lokal erreichbar, also ein geringes Risiko, aber offen.
 3. **Keine automatische Datensicherung** von `data/pipeline.sqlite3` und `credentials/`; es gibt nur eine manuelle Kopie vom 22.11.
-4. **Zwei Zeitsteuerungen nebeneinander:** systemd-Units plus APScheduler. Hinzu kommen Migrationen ausschließlich mit TEXT-Spalten, z. B. `triage_score` als Text.
+4. ~~Zwei Zeitsteuerungen~~ (erledigt 25.11. abends). Offen: Migrationen ausschließlich mit TEXT-Spalten, z. B. `triage_score` als Text.
 5. **Feste Preise** in `costs.py` und `.env` sowie geschätzte TTS- und Whisper-Kosten. Ändern sich die Preise, merkt das niemand.
 
 ### Empfehlung, was als Nächstes kommt

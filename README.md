@@ -34,7 +34,7 @@ Sperre nach 5 Fehlversuchen. Passwort vergessen: `docker compose run --rm job we
 | **Jobs** | Protokoll aller Läufe mit Filter und Logs |
 | **Einstellungen** | Zeitplan für Erstellen und Upload, Veröffentlichungstermine, Passwort |
 
-Der Zeitplan läuft im Web-Dienst (APScheduler); die früheren systemd-Timer sind deaktiviert. Port 8080 nicht ins
+Der Zeitplan läuft im Web-Dienst (APScheduler). Port 8080 nicht ins
 Internet freigeben. Gestaltungsregeln: `docs/ui/DESIGN.md`, Screenshots und Prüfung: `./deploy/ui_check.sh`.
 
 ## Ein Video von Hand erstellen und posten
@@ -106,7 +106,7 @@ oft laufen wie der Median der letzten 20 Uploads ihres Kanals – als Ideenquell
    Chat-ID: `docker compose up -d bot`, dem Bot schreiben, `docker compose logs bot | grep chat_id`,
    in `.env` eintragen, `docker compose up -d bot` erneut. Der Bot reagiert nur auf diese Chat-ID.
 6. **YouTube:** siehe unten.
-7. **Zeitplan:** `sudo bash deploy/install_timers.sh`
+7. **Zeitplan:** im Webinterface unter **Einstellungen** (`docker compose up -d web`, Port 8080)
 
 ### YouTube-Zugang
 
@@ -131,16 +131,13 @@ oft laufen wie der Median der letzten 20 Uploads ihres Kanals – als Ideenquell
 > [Audit](https://support.google.com/youtube/contact/yt_api_form) beantragen.
 > Fallback: `UPLOAD_MODE=manual` in `.env`.
 
-## Zeitplan (systemd – wird durch den Zeitplan im Webinterface ersetzt)
+## Zeitplan
 
-| Timer | Zeit | Job |
-|---|---|---|
-| `shorts-pipeline.timer` | So 06:00 (+ bis 15 Min.) | `pipeline --channel de` – bis zu 7 Videos |
-| `shorts-upload.timer` | täglich 09:30 (+ bis 10 Min., nach dem Quota-Reset 09:00) | `upload --channel de` |
+Erstellen, Upload und Sichtbarkeitsprüfung startet der Web-Dienst nach dem Zeitplan unter **Einstellungen**
+(je Kanal an/aus, Wochentage, Uhrzeit). Fehlgeschlagene Läufe meldet der Job selbst per Telegram; Logs unter **Jobs**.
 
 Termine (`config/channels.yaml`): Mo–Fr 17:00, Sa/So 11:00, mind. 2 h Vorlauf, max. 5 Uploads/Tag
-(1 Upload ≈ 1.600 von 10.000 Einheiten). Schlägt ein Job fehl, meldet `shorts-failure@.service` das per Telegram.
-Kontrolle: `systemctl list-timers 'shorts-*'`, Logs: `journalctl -u shorts-pipeline -e`.
+(`videos.insert` hat einen eigenen Topf von 100 Aufrufen/Tag).
 Der Bot läuft per `restart: unless-stopped` dauerhaft (`docker compose up -d bot`, Logs: `docker compose logs -f bot`).
 
 ## Videos: Inhalt und Gestaltung
@@ -192,7 +189,7 @@ src/shorts/
   costs.py        Kostenberechnung
   notify.py       Telegram-Meldungen
 config/           channels.yaml
-deploy/           setup_host.sh, install_timers.sh, notify_failure.sh, systemd-Units
+deploy/           setup_host.sh, ui_check.sh (Screenshots/Layout-Prüfung der Weboberfläche)
 tests/            pytest
 auth_youtube.py   einmalig auf dem Laptop: YouTube-OAuth-Token erzeugen
 assets/ data/ output/ credentials/   Hintergründe bzw. Laufzeitdaten – data/, output/, credentials/ nicht im Git
