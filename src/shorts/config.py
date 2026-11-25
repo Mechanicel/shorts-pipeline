@@ -20,6 +20,7 @@ class SourceConfig:
     url: str
     link_pattern: str | None = None
     max_items: int = 20
+    enabled: bool = True     # false = Quelle bleibt konfiguriert, wird aber nicht abgerufen
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class ChannelConfig:
     contains_synthetic_media: bool
     tts_voice: str | None
     tts_instructions: str
+    tts_instructions_v3: str
     espeak_voice: str
     default_hashtags: list[str]
     outro_text: str
@@ -62,6 +64,9 @@ class Settings:
     openai_tts_model: str = field(default_factory=lambda: _env("OPENAI_TTS_MODEL", "gpt-4o-mini-tts") or "")
     openai_tts_voice: str = field(default_factory=lambda: _env("OPENAI_TTS_VOICE", "nova") or "nova")
     tts_speed: float = field(default_factory=lambda: float(_env("TTS_SPEED", "1.25") or 1.25))
+    tts_speed_v3: float = field(default_factory=lambda: float(_env("TTS_SPEED_V3", "1.0") or 1.0))
+    # Stil neuer Videos: v2 (Hook-Tafel + Faktenkarten, ~25 s) | v3 (Merkliste, 8–12 s) | alternate (abwechselnd)
+    style_mode: str = field(default_factory=lambda: (_env("STYLE_MODE", "alternate") or "alternate").lower())
     pixabay_api_key: str | None = field(default_factory=lambda: _env("PIXABAY_API_KEY"))
     yt_api_key: str | None = field(default_factory=lambda: _env("YT_API_KEY"))  # nur Recherche (Data API, öffentlich)
     subtitle_timing: str = field(default_factory=lambda: _env("SUBTITLE_TIMING", "whisper") or "whisper")
@@ -105,6 +110,8 @@ def load_channels(path: Path | None = None) -> dict[str, ChannelConfig]:
             contains_synthetic_media=bool(c.get("contains_synthetic_media", False)),
             tts_voice=c.get("tts_voice"),
             tts_instructions=c.get("tts_instructions", ""),
+            tts_instructions_v3=c.get("tts_instructions_v3", "Sprich freundlich und ruhig auf Deutsch, "
+                                                             "wie ein Tipp unter Freunden."),
             espeak_voice=c.get("espeak_voice", c.get("language", "de")),
             default_hashtags=list(c.get("default_hashtags", [])),
             outro_text=c.get("outro_text", ""),

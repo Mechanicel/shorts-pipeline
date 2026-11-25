@@ -84,12 +84,25 @@
       <a href="{{ t.url }}" target="_blank" rel="noopener">Quelle öffnen</a> · {{ word_count(s.get("narration","")) }} Wörter
       {% if t.status == "video" %} · <span class="pill">noch nicht in Telegram</span>{% endif %}</div>
     {% if t.note %}<p class="warn">⚠️ {{ t.note }}</p>{% endif %}
+    {% if s.get("style") == "v3-merkliste" %}
+    <p><span class="pill">Merkliste v3</span> {{ s.get("narration","") }}</p>
+    <div class="merk">
+      <a href="/media/{{ t.id }}/board.png" target="_blank"><img src="/media/{{ t.id }}/board.png" alt="Tafel #{{ t.id }}" class="board"></a>
+      <ul class="merk-items">{% for it in s.get("items", []) %}
+        <li><span class="chip st-{{ it.status|replace(' ', '-') }}">{{ it.status }}</span> <b>{{ it.label }}</b>:
+          {% if it.old_value %}<s>{{ it.old_value }}</s> → {% endif %}<b>{{ it.new_value }}</b>{% if it.note %} ({{ it.note }}){% endif %}
+          <br><span class="muted">„{{ it.evidence }}“</span></li>{% endfor %}
+      </ul>
+    </div>
+    <p class="muted">{{ s.get("cta","") }} · Hintergrund: {{ s.get("background_query","") }} · Kosten: {{ format_cost(t.cost_json, eur) }}</p>
+    {% else %}
     <p>{{ s.get("narration","") }}</p>
     <p class="muted">Grafik: {% if s.get("date_label") %}[{{ s.date_label }}] {% endif %}{% for f in s.get("key_facts", []) %}{{ f.value }} = {{ f.label }}{% if not loop.last %} · {% endif %}{% endfor %}<br>
        Kosten: {{ format_cost(t.cost_json, eur) }}</p>
     <details><summary>Belege ({{ s.get("evidence", [])|length }})</summary>
       <ul>{% for e in s.get("evidence", []) %}<li><b>{{ e.claim }}</b><br><span class="muted">„{{ e.quote }}“</span></li>{% endfor %}</ul>
     </details>
+    {% endif %}
     <details><summary>YouTube-Titel, Beschreibung, Hashtags (bearbeiten)</summary>
       <form method="post" action="/topics/{{ t.id }}/meta" class="stack">
         <label>Titel <input name="title" maxlength="100" required value="{{ s.get('title', t.title) }}"></label>
@@ -121,18 +134,34 @@
 {% endfor %}
 {% endif %}
 
+<h2>Stil-Vergleich</h2>
+<div class="card table-wrap"><table>
+  <thead><tr><th>Stil</th><th>Videos</th><th>Ø Aufrufe nach 72 h</th><th>Ø Länge</th></tr></thead>
+  <tbody>{% for r in styles %}<tr>
+    <td data-label="Stil">{{ style_labels.get(r.style, r.style) }}</td><td data-label="Videos">{{ r.videos }}</td>
+    <td data-label="Ø 72 h">{% if r.avg_72h is not none %}{{ "{:,.0f}".format(r.avg_72h).replace(",", ".") }} <span class="muted">({{ r.with_72h }} mit Wert)</span>{% else %}<span class="muted">noch keine Daten</span>{% endif %}</td>
+    <td data-label="Ø Länge">{% if r.avg_len is not none %}{{ "%.1f"|format(r.avg_len) | replace(".", ",") }} s{% else %}–{% endif %}</td></tr>
+  {% else %}<tr><td colspan="4" class="muted">Noch keine hochgeladenen Videos.</td></tr>{% endfor %}</tbody>
+</table>
+<p class="muted">Aufrufe kommen täglich 12:00 aus der YouTube Analytics API (1–2 Tage Verzug). „Angesehen vs. weggewischt“ liefert die API nicht – bitte pro Video aus Studio unten eintragen.</p></div>
+
 <h2>Zuletzt hochgeladen</h2>
 <div class="card table-wrap"><table>
-  <thead><tr><th>#</th><th>Titel</th><th>Sichtbarkeit</th><th>Veröffentlicht / Termin</th><th>Links</th><th>Kosten</th></tr></thead>
+  <thead><tr><th>#</th><th>Titel</th><th>Sichtbarkeit</th><th>Veröffentlicht / Termin</th><th>Statistik</th><th>Links</th><th>Kosten</th></tr></thead>
   <tbody>
   {% for t in uploaded %}<tr id="t{{ t.id }}">
     <td data-label="#">{{ t.id }}</td><td data-label="Titel">{{ (t.script or {}).get("title", t.title) }}</td>
     <td data-label="Sichtbarkeit">{% if t.yt_visibility == "öffentlich" %}<span class="pill on">öffentlich</span>{% elif t.yt_visibility == "gelöscht" %}<span class="pill off">gelöscht</span>{% elif t.yt_visibility %}<span class="pill">{{ t.yt_visibility }}</span>{% else %}<span class="muted">nicht geprüft</span>{% endif %}
       {% if t.yt_checked_at %}<br><span class="muted">geprüft {{ t.yt_checked_at | local_time }}</span>{% endif %}</td>
     <td data-label="Zeit">{% if t.yt_published_at %}{{ t.yt_published_at | local_time }}{% elif t.publish_at %}geplant {{ t.publish_at | local_time }}{% else %}–{% endif %}</td>
+    <td data-label="Statistik">{% set st = stats.get(t.id) %}{% if st %}{{ "{:,}".format(st.views or 0).replace(",", ".") }} Aufrufe · Ø {{ "%.0f"|format(st.avg_view_pct or 0) }} % gesehen{% if t.yt_views_72h %}<br><span class="muted">72 h: {{ t.yt_views_72h }}</span>{% endif %}{% else %}<span class="muted">–</span>{% endif %}
+      {% if t.youtube_id %}<form method="post" action="/topics/{{ t.id }}/viewed-rate" class="row" style="margin-top:4px">
+        <label class="muted" for="vr{{ t.id }}">Angesehen %</label>
+        <input id="vr{{ t.id }}" name="rate" inputmode="decimal" style="width:70px" value="{{ t.yt_viewed_rate or '' }}" placeholder="aus Studio">
+        <button class="ghost small">✓</button></form>{% endif %}</td>
     <td data-label="Links">{% if t.youtube_id %}<a href="https://youtu.be/{{ t.youtube_id }}" target="_blank" rel="noopener">YouTube</a> · <a href="{{ studio_url.format(id=t.youtube_id) }}" target="_blank" rel="noopener">Studio</a>{% else %}{{ t.status }}{% endif %}</td>
     <td data-label="Kosten" class="muted">{% set c = format_cost(t.cost_json, eur) %}{{ "–" if c == "keine Angaben" else c.split(" (")[0] }}</td></tr>
-  {% else %}<tr><td colspan="6" class="muted">Noch nichts.</td></tr>{% endfor %}
+  {% else %}<tr><td colspan="7" class="muted">Noch nichts.</td></tr>{% endfor %}
   </tbody>
 </table></div>
 

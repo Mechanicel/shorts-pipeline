@@ -38,8 +38,9 @@ unter nach vor nicht auch noch geplant geplante geplanter ende ohne bald dich di
 
 def content_words(script: dict) -> set[str]:
     """Inhaltswörter aus Titel, Bild-Titel und Grafik-Beschriftungen eines Skripts."""
-    text = " ".join([script.get("title", ""), script.get("overlay_title", "")]
-                    + [f.get("label", "") for f in script.get("key_facts", [])])
+    text = " ".join([script.get("title", ""), script.get("overlay_title", ""), script.get("headline", "")]
+                    + [f.get("label", "") for f in script.get("key_facts", [])]
+                    + [it.get("label", "") for it in script.get("items", [])])
     return {w for w in re.findall(r"[a-zäöüß][a-zäöüß-]{2,}", text.lower()) if w not in _STOP}
 
 
@@ -61,6 +62,8 @@ def covered_listing(covered: list[tuple[int, dict]]) -> str:
     lines = []
     for tid, s in covered:
         facts = ", ".join(f"{f.get('value', '')} {f.get('label', '')}".strip() for f in s.get("key_facts", []))
+        facts = facts or ", ".join(f"{it.get('label', '')} {it.get('new_value', '')}".strip()
+                                   for it in s.get("items", []))
         lines.append(f"[#{tid}] {s.get('title', '')}" + (f" – {facts}" if facts else ""))
     return "\n".join(lines) or "(none)"
 

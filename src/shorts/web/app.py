@@ -18,7 +18,12 @@ from fastapi.templating import Jinja2Templates
 from .. import actions
 from ..config import Settings, get_channel, load_settings
 from ..costs import format_cost
+from ..analytics import latest_stats, style_comparison
 from ..deadline import choose_slot, deadline_of
+from ..render import probe_duration
+
+STYLE_LABELS = {"v1": "v1 (Start, ohne Hook-Tafel)", "v2-hook-frame0": "v2 Hook-Tafel (~25 s)",
+                "v3-merkliste": "v3 Merkliste (8–12 s)"}
 from ..db import Database, Status
 from ..script import word_count
 from ..review_bot import source_date_label
@@ -94,8 +99,13 @@ def warning_badges(topic, today=None) -> list[str]:
             badges.append(f"Quelle {age} Tage alt")
     else:
         badges.append("Datum unbekannt")
-    narration = (topic.script or {}).get("narration", "")
-    if topic.source_text and _PLAN_WORDS.search(topic.source_text) and not _HEDGE_WORDS.search(narration):
+    script = topic.script or {}
+    narration = script.get("narration", "")
+    if script.get("style") == "v3-merkliste":
+        from ..merkliste import status_warnings
+        if status_warnings(script.get("items", [])):
+            badges.append("Status nicht eindeutig belegt")
+    elif topic.source_text and _PLAN_WORDS.search(topic.source_text) and not _HEDGE_WORDS.search(narration):
         badges.append("Rechtsstatus prüfen: Quelle spricht von Plan/Entwurf")
     return badges
 
@@ -244,6 +254,8 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
             waiting=d.by_status(Status.VIDEO, channel.key) + d.by_status(Status.WARTET, channel.key),
             free_slots=free_slots, avg_video=avg_video,
             approved=approved, slot_hints=slot_hints,
+            styles=style_comparison(d, channel.key, probe_duration), stats=latest_stats(d),
+            style_labels=STYLE_LABELS,
             uploaded=uploaded, uploads=uploads, api_public=api_public, source_date_label=source_date_label,
             failed=d.by_status(Status.FEHLER, channel.key),
             in_work=d.by_status(Status.SKRIPT, channel.key),
@@ -265,6 +277,16 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         if not path.is_relative_to(s.output_dir.resolve()) or not path.exists():
             raise HTTPException(404)
         return FileResponse(path, media_type="video/mp4")
+
+    @app.get("/media/{topic_id}/board.png")
+    def media_board(topic_id: int):
+        t = db().get(topic_id)
+        if not t.video_path:
+            raise HTTPException(404)
+        path = (Path(t.video_path).parent / "board.png").resolve()
+        if not path.is_relative_to(s.output_dir.resolve()) or not path.exists():
+            raise HTTPException(404)
+        return FileResponse(path, media_type="image/png")
 
     # ------------------------------------------------------------------ Aktionen
     def start(kind: str, args: list[str], label: str) -> RedirectResponse:
@@ -302,6 +324,18 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
             local = datetime.fromisoformat(slot.replace("Z", "+00:00")).astimezone(BERLIN)
             args += ["--publish-at", local.strftime("%Y-%m-%d %H:%M"), "--mode", "api"]
         return start("upload", args, f"Upload von #{topic_id}")
+
+    @app.post("/topics/{topic_id}/viewed-rate")
+    def topic_viewed_rate(topic_id: int, rate: str = Form("")):
+        value = rate.strip().replace(",", ".").rstrip("%").strip()
+        if value:
+            try:
+                if not 0 <= float(value) <= 100:
+                    raise ValueError
+            except ValueError:
+                return back(err=f"#{topic_id}: Bitte einen Prozentwert zwischen 0 und 100 eintragen.")
+        db().update_fields(topic_id, yt_viewed_rate=value or None)
+        return back(msg=f"#{topic_id}: „Angesehen vs. weggewischt“ gespeichert.", to=f"/#t{topic_id}")
 
     @app.post("/topics/{topic_id}/meta")
     def topic_meta(topic_id: int, title: str = Form(...), description: str = Form(""), hashtags: str = Form("")):

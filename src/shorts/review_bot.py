@@ -29,6 +29,8 @@ def format_review(topic: Topic, eur_per_usd: float = 0.9) -> str:
     """Review-Text: alles, was für Faktencheck und Freigabe nötig ist."""
     s = topic.script or {}
     narration = s.get("narration", "")
+    if s.get("style") == "v3-merkliste":
+        return _format_review_v3(topic, s, eur_per_usd)
     lines = [
         f"🎬 #{topic.id} [{topic.channel}] {s.get('title', topic.title)}",
         f"Quelle: {topic.source_name} · {source_date_label(topic.published_at)}",
@@ -49,6 +51,29 @@ def format_review(topic: Topic, eur_per_usd: float = 0.9) -> str:
     lines += ["", f"💶 Kosten: {format_cost(topic.cost_json, eur_per_usd)}"]
     lines += ["", f"Beschreibung: {s.get('description', '')}",
               f"Hashtags: {' '.join(s.get('hashtags', []))}"]
+    text = "\n".join(lines)
+    return text if len(text) <= TG_TEXT_LIMIT else text[: TG_TEXT_LIMIT - 20] + "\n… (gekürzt)"
+
+
+def _format_review_v3(topic: Topic, s: dict, eur_per_usd: float) -> str:
+    from .deadline import deadline_of
+    from .merkliste import STATUS_EMOJI, status_warnings
+
+    lines = [f"📋 #{topic.id} [{topic.channel}] Merkliste: {s.get('title', topic.title)}",
+             f"Quelle: {topic.source_name} · {source_date_label(topic.published_at)}", topic.url, "",
+             f"🗣 {s.get('narration', '')}", "", f"🟨 {s.get('headline', '')}" + (f" · {s['date_label']}" if s.get("date_label") else "")]
+    for it in s.get("items", []):
+        change = f"{it['old_value']} → {it['new_value']}" if it.get("old_value") else it.get("new_value", "")
+        note = f" ({it['note']})" if it.get("note") else ""
+        lines.append(f"{STATUS_EMOJI.get(it.get('status'), '•')} {it.get('label')}: {change}{note} [{it.get('status')}]"
+                     f"\n   „{it.get('evidence', '')}“")
+    lines += ["", f"📣 {s.get('cta', '')}", f"Hintergrund: {s.get('background_query', '')}"]
+    if dl := deadline_of(s, date.today()):
+        lines.append(f"⏰ {dl.kind} {dl.day:%d.%m.%Y} – spätestens {dl.latest_publish_day:%d.%m.} veröffentlichen")
+    warnings = status_warnings(s.get("items", []))
+    if topic.note or warnings:
+        lines += [""] + [f"⚠️ {w}" for w in warnings] + ([f"⚠️ {topic.note}"] if topic.note else [])
+    lines += ["", f"💶 Kosten: {format_cost(topic.cost_json, eur_per_usd)}"]
     text = "\n".join(lines)
     return text if len(text) <= TG_TEXT_LIMIT else text[: TG_TEXT_LIMIT - 20] + "\n… (gekürzt)"
 
@@ -114,6 +139,11 @@ class ReviewBot:
                 chat_id=self.chat_id, video=f, supports_streaming=True,
                 caption=f"#{topic.id} {s.get('title', topic.title)}"[:1000],
                 read_timeout=120, write_timeout=120)
+        board = Path(topic.video_path).parent / "board.png"
+        if s.get("style") == "v3-merkliste" and board.exists():  # Tafel groß als Bild zum Gegenlesen
+            with open(board, "rb") as f:
+                await context.bot.send_photo(chat_id=self.chat_id, photo=f, caption=f"#{topic.id} Tafel",
+                                             read_timeout=60, write_timeout=60)
         msg = await context.bot.send_message(
             chat_id=self.chat_id, text=format_review(topic, self.s.eur_per_usd), reply_markup=review_keyboard(topic.id),
             disable_web_page_preview=True)

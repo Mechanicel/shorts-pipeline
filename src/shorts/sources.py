@@ -119,6 +119,8 @@ def collect_topics(db: Database, channel: ChannelConfig) -> tuple[int, list[str]
     """Ruft alle Quellen ab. Gibt (Anzahl neuer Themen, Fehlerliste) zurück."""
     new, errors = 0, []
     for src in channel.sources:
+        if not src.enabled:
+            continue
         try:
             items = fetch_source(src)
         except Exception as exc:  # eine kaputte Quelle darf den Lauf nicht stoppen

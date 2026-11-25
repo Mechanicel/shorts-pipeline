@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from .config import ChannelConfig, Settings
 from .deadline import choose_slot, deadline_of
+from .merkliste import STYLE_V3, description_v3
 from .db import Database, Status, Topic
 from .notify import notify
 from .result import ERROR, OK, WARN, plural, report
@@ -77,8 +78,11 @@ def build_metadata(topic: Topic, channel: ChannelConfig, publish_at: str | None)
     hashtags = list(dict.fromkeys(s.get("hashtags", []) + channel.default_hashtags))  # ohne Duplikate
     title = s.get("title", topic.title).replace("<", "").replace(">", "")[:100]
     credit = f"\n{topic.background_credit}" if topic.background_credit else ""
-    description = (f"{s.get('description', '')}\n\nQuelle: {topic.url}{credit}\n\n"
-                   f"Alle Angaben ohne Gewähr, Stand bei Veröffentlichung.\n\n{' '.join(hashtags)}")
+    if s.get("style") == STYLE_V3:  # Merkliste: komplette Liste mit Status in die Beschreibung
+        description = f"{description_v3(s, topic.url, topic.background_credit)}\n\n{' '.join(hashtags)}"
+    else:
+        description = (f"{s.get('description', '')}\n\nQuelle: {topic.url}{credit}\n\n"
+                       f"Alle Angaben ohne Gewähr, Stand bei Veröffentlichung.\n\n{' '.join(hashtags)}")
     return {
         "snippet": {
             "title": title,
@@ -122,7 +126,8 @@ def youtube_client(channel: ChannelConfig):
     path = channel.youtube_token
     if not path.exists():
         raise RuntimeError(f"Token-Datei fehlt: {path.name} (auth_youtube.py ausführen, siehe README)")
-    creds = Credentials.from_authorized_user_file(str(path), SCOPES)
+    # Scopes aus der Datei übernehmen (Upload + ggf. Analytics), damit ein Refresh keine Rechte aus der Datei streicht
+    creds = Credentials.from_authorized_user_file(str(path))
     if not creds.valid:
         if not creds.refresh_token:
             raise RuntimeError("Token ohne refresh_token – auth_youtube.py erneut ausführen")

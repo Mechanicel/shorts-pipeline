@@ -76,6 +76,10 @@ CREATE TABLE IF NOT EXISTS topics (
     yt_published_at TEXT,            -- tatsächlicher Veröffentlichungszeitpunkt laut YouTube
     triage        TEXT,              -- Ergebnis der Vorauswahl (Begründung), NULL = noch nicht geprüft
     triage_score  TEXT,              -- Priorität 1–5 aus der Vorauswahl (höher = zuerst ans Skript-Modell)
+    style         TEXT,              -- Gestaltung: v2-hook-frame0 | v3-merkliste
+    yt_viewed_rate TEXT,             -- „Angesehen vs. weggewischt“ in % (von Hand aus Studio, API liefert ihn nicht)
+    yt_views_72h  TEXT,              -- Aufrufe der ersten 72 h laut Analytics API
+    video_seconds TEXT,              -- Länge des fertigen Videos
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
     UNIQUE(channel, url)
@@ -139,6 +143,10 @@ class Topic:
     yt_published_at: str | None
     triage: str | None
     triage_score: str | None
+    style: str | None
+    yt_viewed_rate: str | None
+    yt_views_72h: str | None
+    video_seconds: str | None
     created_at: str
     updated_at: str
 
@@ -168,7 +176,8 @@ class Database:
     def _migrate(self) -> None:
         """Fehlende Spalten bei bestehenden Datenbanken ergänzen (nur additive Änderungen)."""
         wanted = {"topics": ("background_credit", "cost_json", "yt_visibility", "yt_checked_at", "yt_published_at",
-                             "triage", "triage_score"),
+                             "triage", "triage_score", "style", "yt_viewed_rate", "yt_views_72h",
+                             "video_seconds"),
                   "job_runs": ("result_status", "result_summary")}
         # Alte Einheiten-Zählung (1.600 je Upload) einmalig in Upload-Anzahl übernehmen
         if not self._conn.execute("SELECT 1 FROM upload_counts LIMIT 1").fetchone():
@@ -259,6 +268,14 @@ class Database:
             "SELECT publish_at FROM topics WHERE channel=? AND publish_at IS NOT NULL "
             "AND COALESCE(yt_visibility,'') != 'gelöscht'", (channel,))
         return {r[0] for r in rows}
+
+    def style_counts(self, channel: str, days: int = 30) -> dict[str, int]:
+        """Wie viele Themen der letzten N Tage welchen Stil bekamen (für STYLE_MODE=alternate)."""
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+        rows = self._conn.execute(
+            "SELECT style, COUNT(*) FROM topics WHERE channel=? AND style IS NOT NULL AND created_at >= ? "
+            "AND status NOT IN ('neu', 'verworfen') GROUP BY style", (channel, since))
+        return {r[0]: r[1] for r in rows}
 
     def planned_publish_times(self, channel: str) -> list[str]:
         """Termine hochgeladener, nicht gelöschter Videos (für die Vorrats-Prüfung)."""

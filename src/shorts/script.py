@@ -220,18 +220,20 @@ class ClaudeScriptWriter:
         self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key, max_retries=3)
         self._model = settings.anthropic_model
         self._effort = settings.anthropic_effort
+        self._channel = channel
         self.spent: list[float | None] = []
         self._system = SYSTEM_PROMPT.format(
             channel_name=channel.name, locale=channel.locale_hint or channel.language,
             language=channel.language, min_words=MIN_WORDS, max_words=MAX_WORDS, hook_max=HOOK_MAX_WORDS)
 
-    def _call(self, user_content: str) -> ShortScript:
+    def _call(self, user_content: str, output=None, system: str | None = None):
+        output = output or ShortScript
         kwargs: dict = dict(
             model=self._model,
             max_tokens=16000,
-            system=self._system,
+            system=system or self._system,
             messages=[{"role": "user", "content": user_content}],
-            output_format=ShortScript,
+            output_format=output,
         )
         if self._effort:
             kwargs["output_config"] = {"effort": self._effort}
@@ -243,6 +245,8 @@ class ClaudeScriptWriter:
         self.spent.append(claude_cost(response.model, response.usage.input_tokens,
                                       response.usage.output_tokens))
         if response.stop_reason == "refusal":
+            if output is not ShortScript:
+                raise RuntimeError("Modell hat die Anfrage abgelehnt (refusal).")
             return ShortScript(discard=True, discard_reason="Modell hat die Anfrage abgelehnt.",
                                title="", overlay_title="", narration="", description="",
                                hashtags=[], evidence=[], key_facts=[], date_label="")
@@ -269,6 +273,32 @@ class ClaudeScriptWriter:
         return script
 
 
+    def write_v3(self, *, headline: str, url: str, source_name: str, text: str, source_date: str = "unbekannt",
+                 today: str = "", covered: str = "(none)"):
+        """Stil v3 „Merkliste“. Ein Korrekturversuch bei Regel- oder Layoutproblemen (Tafel passt nicht)."""
+        from datetime import date
+
+        from .merkliste import MAX_WORDS_V3, MIN_WORDS_V3, V3_SYSTEM, MerklisteScript, validate_v3
+
+        system = V3_SYSTEM.format(channel_name=self._channel.name,
+                                  locale=self._channel.locale_hint or self._channel.language,
+                                  language=self._channel.language, min_words=MIN_WORDS_V3, max_words=MAX_WORDS_V3,
+                                  hook_max=HOOK_MAX_WORDS)
+        self.spent = []
+        user = USER_TEMPLATE.format(source_name=source_name, url=url, headline=headline, text=text,
+                                    source_date=source_date, today=today or date.today().isoformat(), covered=covered)
+        script = self._call(user, MerklisteScript, system)
+        problems = validate_v3(script)
+        if problems:
+            log.info("Merkliste wird nachgebessert: %s", problems)
+            script = self._call(user + "\n\nA previous attempt had these problems, fix them (shorter texts or fewer "
+                                "items if the board does not fit): " + " ".join(problems), MerklisteScript, system)
+            problems = validate_v3(script)
+            if problems:
+                raise RuntimeError("Merkliste ungültig: " + " ".join(problems))
+        return script
+
+
 class SampleScriptWriter:
     """Dry-Run: liefert ein festes Beispielskript, ohne API-Aufruf."""
 
@@ -278,6 +308,11 @@ class SampleScriptWriter:
     def write(self, *, headline: str, url: str, source_name: str, text: str,
               source_date: str = "unbekannt", today: str = "", covered: str = "(none)") -> ShortScript:
         return ShortScript.model_validate(self._sample)
+
+    def write_v3(self, **kw):
+        from . import sample_data
+        from .merkliste import MerklisteScript
+        return MerklisteScript.model_validate(sample_data.SAMPLE_V3)
 
 
 def script_to_json(script: ShortScript) -> str:

@@ -48,6 +48,12 @@
   .stack input, .stack textarea { width:100%; }
   button.small { padding:5px 10px; font-size:.85rem; }
   .table-wrap { overflow-x:auto; }
+  .merk { display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start; }
+  .merk .board { width:270px; max-width:100%; border-radius:12px; border:1px solid var(--line); }
+  .merk-items { flex:1; min-width:240px; margin:0; padding-left:18px; } .merk-items li { margin-bottom:8px; }
+  .chip { display:inline-block; border-radius:999px; padding:1px 9px; font-size:.8rem; font-weight:700; color:#fff; background:#788496; }
+  .chip.st-in-Kraft, .chip.st-beschlossen { background:#2ea05a; } .chip.st-Entwurf { background:var(--yellow); color:var(--navy); }
+  .chip.st-geplant { background:#788496; }
   select, input, textarea { max-width:100%; } .row > form { max-width:100%; }
   .actions { margin-top:10px; }
   @media (max-width:700px) {

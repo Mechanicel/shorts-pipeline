@@ -93,6 +93,62 @@ def credit_for(meta: dict) -> str:
     return f"Video: Pixabay {meta['pageURL']}"
 
 
+PIXABAY_IMAGES = "https://pixabay.com/api/"
+
+
+def pixabay_image_search(api_key: str, query: str, cache_dir: Path, now: float | None = None) -> list[dict]:
+    """Bildsuche (hochkant) mit 24-h-Dateicache – für die ruhigen, unscharfen Hintergründe von Stil v3."""
+    now = now or time.time()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache = cache_dir / f"imgsearch_{hashlib.sha1(query.lower().encode()).hexdigest()[:16]}.json"
+    if cache.exists():
+        cached = json.loads(cache.read_text(encoding="utf-8"))
+        if now - cached["ts"] < SEARCH_CACHE_SECONDS:
+            return cached["hits"]
+    _throttle()
+    resp = httpx.get(PIXABAY_IMAGES, timeout=20, params={
+        "key": api_key, "q": query[:100], "image_type": "photo", "orientation": "vertical",
+        "safesearch": "true", "order": "popular", "per_page": 20})
+    resp.raise_for_status()  # Fehlermeldung enthält die URL samt Key → nie die Exception-Message loggen
+    hits = resp.json().get("hits", [])
+    cache.write_text(json.dumps({"ts": now, "query": query, "hits": hits}), encoding="utf-8")
+    return hits
+
+
+def pick_topic_image(api_key: str | None, query: str, cache_dir: Path, seed: int = 0) -> BackgroundChoice:
+    """Ein Pixabay-Foto passend zum Thema (Suchbegriff von Claude). Ohne Treffer: None → ruhiger Navy-Verlauf.
+    Bereits geladene Bilder zum selben Begriff werden wiederverwendet (keine Massen-Downloads)."""
+    query = " ".join((query or "").lower().split()[:2])
+    if not api_key or not query:
+        return BackgroundChoice(None)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    for meta_path in sorted(cache_dir.glob("pixabayimg_*.json")):
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        img = meta_path.with_suffix(".jpg")
+        if meta.get("query") == query and img.exists():
+            return BackgroundChoice(img, f"Bild: Pixabay {meta['pageURL']}")
+    try:
+        hits = [h for h in pixabay_image_search(api_key, query, cache_dir) if matches_query(h, query)
+                and h.get("largeImageURL")]
+        if not hits:
+            log.info("Pixabay: kein passendes Bild für '%s' – Navy-Verlauf", query)
+            return BackgroundChoice(None)
+        hit = hits[seed % min(len(hits), 5)]
+        out = cache_dir / f"pixabayimg_{hit['id']}.jpg"
+        if not out.exists():
+            _throttle()
+            r = httpx.get(hit["largeImageURL"], timeout=60, follow_redirects=True)
+            r.raise_for_status()
+            out.write_bytes(r.content)
+        out.with_suffix(".json").write_text(json.dumps({
+            "id": hit["id"], "pageURL": hit["pageURL"], "user": hit.get("user"), "tags": hit.get("tags"),
+            "query": query}, ensure_ascii=False), encoding="utf-8")
+        return BackgroundChoice(out, f"Bild: Pixabay {hit['pageURL']}")
+    except Exception as exc:
+        log.warning("Pixabay-Bild '%s' fehlgeschlagen (%s) – Navy-Verlauf", query, type(exc).__name__)
+        return BackgroundChoice(None)
+
+
 def fill_pixabay_pool(api_key: str, queries: list[str], cache_dir: Path,
                       target: int = POOL_TARGET, min_duration: int = 10) -> list[Path]:
     """Hält einen kleinen lokalen Clip-Pool vor; lädt pro Lauf höchstens MAX_NEW_DOWNLOADS_PER_RUN."""

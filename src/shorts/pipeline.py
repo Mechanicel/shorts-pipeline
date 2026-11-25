@@ -13,9 +13,11 @@ from .config import ChannelConfig, Settings
 from .costs import per_minute_cost
 from .db import Database, Status, Topic
 from .notify import notify
-from .backgrounds import pick_background
+from .backgrounds import pick_background, pick_topic_image
+from .merkliste import (MAX_SECONDS, STYLE_V2, STYLE_V3, render_v3, script_json_v3, status_warnings,
+                        unverified_items)
 from .render import RenderJob, probe_duration, render
-from .script import (SCRIPT_STYLE, ClaudeScriptWriter, SampleScriptWriter, ScriptWriter, unverified_numbers,
+from .script import (SCRIPT_STYLE, hook_of, ClaudeScriptWriter, SampleScriptWriter, ScriptWriter, unverified_numbers,
                      unverified_quotes)
 from .result import ERROR, OK, WARN, plural, report as report_result
 from .sources import collect_topics, fetch_article
@@ -195,7 +197,7 @@ class Pipeline:
 
     def _script_one(self, topic: Topic, report: RunReport) -> None:
         text, date_str = topic.source_text, topic.published_at
-        if not text or not date_str:  # Datum notfalls von der Artikelseite (z. B. Verbraucherzentrale)
+        if not text or (not date_str and not self.dry_run):  # Datum notfalls von der Artikelseite (z. B. VZ)
             article = fetch_article(topic.url)
             text, date_str = text or article.text, date_str or article.date
             self.db.update_fields(topic.id, source_text=text, published_at=date_str)
@@ -206,15 +208,30 @@ class Pipeline:
             self.db.transition(topic.id, Status.VERWORFEN, source_text=text, note="Quelltext zu kurz")
             report.discarded += 1
             return
+        covered = self._covered(exclude=topic.id)
+        args = dict(headline=topic.title, url=topic.url, source_name=topic.source_name, text=text,
+                    source_date=(date_str or "unbekannt")[:10], covered=covered_listing(covered))
+        fallback_note = None
+        if self.choose_style() == STYLE_V3 and hasattr(self.writer, "write_v3"):
+            try:
+                merk = self.writer.write_v3(**args)
+            finally:
+                self._book_writer_cost(topic, report)
+            if merk.discard:
+                self.db.update_fields(topic.id, source_text=text)
+                dup = merk.discard_reason.lower().startswith("dublette")
+                self._discard(topic, report, "Dublette" if dup else "Skript-Prüfung: kein passendes Thema",
+                              f"Claude: {merk.discard_reason}")
+                return
+            if merk.list_possible:
+                self._save_v3(topic, merk, text, covered, report)
+                return
+            fallback_note = f"v3 nicht möglich: {merk.list_impossible_reason or 'zu wenige listenfähige Fakten'}"
+            log.info("#%s %s – läuft als v2", topic.id, fallback_note)
         try:
-            covered = self._covered(exclude=topic.id)
-            script = self.writer.write(headline=topic.title, url=topic.url, source_name=topic.source_name,
-                                       text=text, source_date=(date_str or "unbekannt")[:10],
-                                       covered=covered_listing(covered))
+            script = self.writer.write(**args)
         finally:  # auch fehlgeschlagene/verworfene Versuche kosten Geld
-            for usd in getattr(self.writer, "spent", []):
-                self.db.add_cost(topic.id, "claude", usd)
-                report.cost_usd += usd or 0.0
+            self._book_writer_cost(topic, report)
         if script.discard:
             self.db.update_fields(topic.id, source_text=text)
             dup = script.discard_reason.lower().startswith("dublette")
@@ -230,17 +247,48 @@ class Pipeline:
             warnings.append("Zitate nicht wörtlich im Quelltext: " + " | ".join(missing))
         if numbers := unverified_numbers(script, text):
             warnings.append("Grafik-Zahlen nicht im Quelltext: " + " | ".join(numbers))
+        if fallback_note:
+            warnings.insert(0, fallback_note)
         note = "\n⚠️ ".join(warnings) or None
         data["style"] = SCRIPT_STYLE  # Variante merken, um später Varianten in Analytics vergleichen zu können
         self.db.transition(topic.id, Status.SKRIPT, source_text=text,
-                           script_json=json.dumps(data, ensure_ascii=False, indent=2), note=note)
+                           script_json=json.dumps(data, ensure_ascii=False, indent=2), note=note, style=SCRIPT_STYLE)
+        report.scripted += 1
+
+    def _book_writer_cost(self, topic: Topic, report: RunReport) -> None:
+        for usd in getattr(self.writer, "spent", []):
+            self.db.add_cost(topic.id, "claude", usd)
+            report.cost_usd += usd or 0.0
+        self.writer.spent = []
+
+    def choose_style(self) -> str:
+        """STYLE_MODE: v2 | v3 | alternate. alternate gibt dem bisher selteneren Stil den Vorzug (bei Gleichstand v3),
+        sodass beide über die Woche gleich oft – und damit an wechselnden Wochentagen – erscheinen."""
+        mode = self.s.style_mode
+        if mode in ("v2", STYLE_V2):
+            return STYLE_V2
+        if mode in ("v3", STYLE_V3):
+            return STYLE_V3
+        counts = self.db.style_counts(self.ch.key)
+        return STYLE_V3 if counts.get(STYLE_V3, 0) <= counts.get(STYLE_V2, 0) else STYLE_V2
+
+    def _save_v3(self, topic: Topic, merk, text: str, covered: list[tuple[int, dict]], report: RunReport) -> None:
+        data = merk.model_dump()
+        items = data["items"]
+        warnings = unverified_items(items, text) + status_warnings(items)
+        if similar := similar_scripts(data, covered):
+            titles = {tid: s.get("title", "") for tid, s in covered}
+            warnings.append("Ähnliches Thema schon vorhanden: " + " | ".join(f"#{i} {titles[i]}" for i in similar))
+        self.db.transition(topic.id, Status.SKRIPT, source_text=text, script_json=script_json_v3(merk),
+                           note="\n⚠️ ".join(warnings) or None, style=STYLE_V3)
         report.scripted += 1
 
     def step_render(self, report: RunReport) -> None:
         for topic in self.db.by_status(Status.SKRIPT, self.ch.key, limit=self.ch.max_videos_per_run):
             try:
                 path = self._render_one(topic)
-                self.db.transition(topic.id, Status.VIDEO, video_path=str(path))
+                self.db.transition(topic.id, Status.VIDEO, video_path=str(path),
+                                   video_seconds=f"{probe_duration(path):.1f}")
                 report.rendered += 1
                 report.videos.append(path)
             except Exception as exc:
@@ -252,6 +300,8 @@ class Pipeline:
         if out_dir.exists():
             shutil.rmtree(out_dir)  # nur eigene, generierte Zwischendateien dieses Themas
         out_dir.mkdir(parents=True)
+        if script.get("style") == STYLE_V3:
+            return self._render_v3(topic, script, out_dir)
         narration: str = script["narration"]
         audio = self.tts.synthesize(narration, out_dir)
         if self.tts.name == "openai":
@@ -280,6 +330,30 @@ class Pipeline:
             background=bg.path, key_facts=script.get("key_facts") or [],
             date_label=script.get("date_label") or "",
             badge="TESTVIDEO · DRY-RUN" if self.dry_run else None, hook=hook, hook_end=hook_end))
+
+    def _render_v3(self, topic: Topic, script: dict, out_dir: Path) -> Path:
+        narration = script["narration"]
+        audio = self.tts.synthesize(narration, out_dir, instructions=self.ch.tts_instructions_v3)
+        if self.tts.name == "openai":
+            self._spend(topic.id, "tts", per_minute_cost(probe_duration(audio), self.s.tts_usd_per_min))
+        if abs(self.s.tts_speed_v3 - 1.0) > 0.01:
+            audio = apply_speed(audio, self.s.tts_speed_v3)
+        speech = probe_duration(audio)
+        limit = MAX_SECONDS - 1.0  # mindestens 1 s Lesezeit nach dem letzten Wort
+        if speech > limit:  # hart auf 12 s begrenzt: leicht beschleunigen statt abschneiden
+            factor = speech / (limit - 0.3)
+            if factor > 1.25:
+                raise RuntimeError(f"Sprechtext zu lang für v3 ({speech:.1f}s)")
+            audio = apply_speed(audio, factor)
+            speech = probe_duration(audio)
+        self.db.update_fields(topic.id, audio_path=str(audio))
+        words = split_words(narration)
+        hook_words = len(split_words(hook_of(narration)))
+        hook_end = speech * hook_words / max(len(words), 1)
+        bg = pick_topic_image(None if self.dry_run else self.s.pixabay_api_key, script.get("background_query", ""),
+                              self.s.data_dir / "backgrounds" / "pixabay_images", seed=topic.id)
+        self.db.update_fields(topic.id, background_credit=bg.credit)
+        return render_v3(script, audio, speech, hook_end, bg.path, out_dir)
 
     def _spend(self, topic_id: int, part: str, usd: float) -> None:
         self.db.add_cost(topic_id, part, usd)

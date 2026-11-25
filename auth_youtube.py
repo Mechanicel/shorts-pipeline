@@ -21,7 +21,8 @@ import json
 import sys
 from pathlib import Path
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
+          "https://www.googleapis.com/auth/yt-analytics.readonly"]  # Statistiken pro Video (seit 25.11.2026)
 
 
 def main() -> int:

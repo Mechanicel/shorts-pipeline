@@ -10,6 +10,8 @@ channels:
     youtube_category_id: "25"            # 25 = News & Politics
     contains_synthetic_media: false      # YouTube-Kennzeichnung "veränderte/synthetische Inhalte"
     tts_voice: null                      # null = OPENAI_TTS_VOICE aus .env
+    tts_instructions_v3: >-
+      Sprich freundlich und ruhig auf Deutsch, wie ein Tipp unter Freunden. Klar und deutlich, nicht hektisch.
     tts_instructions: >-
       Sprich wie eine freundliche, sachliche Nachrichtensprecherin auf Deutsch.
       Zügiges Tempo, klare Betonung von Zahlen und Daten.
@@ -65,18 +67,28 @@ channels:
       - name: Bundesregierung – Artikel
         type: rss
         url: https://www.bundesregierung.de/service/rss/breg-de/1151246/feed.xml
+      # Monatsübersichten „Was ist neu im …?“ – ein Artikel kann eine v3-Merkliste mit mehreren Punkten ergeben
+      - name: Bundesregierung – Neuregelungen
+        type: html
+        url: https://www.bundesregierung.de/breg-de/aktuelles/gesetzliche-neuregelungen-442800
+        link_pattern: '^/breg-de/aktuelles/(gesetzliche-)?neuregelungen-[a-z0-9-]*\d{6,}$'
+        max_items: 6
+      # Deaktiviert am 25.11.2026: in den ersten Läufen kein einziges Video (0 von 26 / 20 / 11 Themen)
       - name: Bundesregierung – Pressemitteilungen
         type: rss
         url: https://www.bundesregierung.de/service/rss/breg-de/1151244/feed.xml
+        enabled: false
       - name: Bundesfinanzministerium – Pressemitteilungen
         type: rss
         url: https://www.bundesfinanzministerium.de/SiteGlobals/Functions/RSSFeed/DE/Pressemitteilungen/RSSPressemitteilungen.xml
+        enabled: false
       - name: BMAS – Aktuelles
         type: rss
         url: https://www.bmas.de/SiteGlobals/Functions/RSSFeed/DE/RSSNewsfeed/RSSNewsfeed.xml
       - name: Bundesnetzagentur – Pressemitteilungen
         type: rss
         url: https://www.bundesnetzagentur.de/SiteGlobals/Functions/RSSFeed/DE/RSSNewsfeed/RSSNewsfeed_Pressemitteilungen.xml?nn=693926
+        enabled: false
       - name: Verbraucherzentrale – Wissen
         type: html                       # kein RSS vorhanden -> Links von der Startseite
         url: https://www.verbraucherzentrale.de/

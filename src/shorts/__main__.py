@@ -176,7 +176,34 @@ def cmd_check_public(args, settings) -> int:
         notify(settings, f"[{args.channel}] {warning}")
     else:
         log.info("Vorrat: %d Videos an %d Tagen geplant", stock.videos, stock.days)
+    _fetch_analytics(settings, db, args.channel)  # täglich mit der Sichtbarkeitsprüfung; Fehler stoppen nichts
     return rc
+
+
+def _fetch_analytics(settings, db, channel_key: str) -> dict | None:
+    from .analytics import MissingScope, analytics_client, fetch_stats
+
+    try:
+        client = analytics_client(get_channel(channel_key))
+        counts = fetch_stats(db, channel_key, lambda **p: client.reports().query(**p).execute())
+        log.info("Analytics: %d Videos, %d Zeilen, %d× 72-h-Wert neu", counts["videos"], counts["rows"], counts["h72"])
+        return counts
+    except MissingScope as exc:
+        log.warning("Analytics übersprungen: %s", exc)
+    except Exception as exc:
+        log.warning("Analytics fehlgeschlagen: %s", type(exc).__name__)
+    return None
+
+
+def cmd_analytics(args, settings) -> int:
+    from .result import ERROR, OK, report
+
+    counts = _fetch_analytics(settings, _db(settings, False), args.channel)
+    if counts is None:
+        report(ERROR, "Analytics nicht abrufbar – Details im Log (Token mit Analytics-Recht nötig?)")
+        return 1
+    report(OK, f"Analytics: {counts['videos']} Videos aktualisiert, {counts['h72']}× Aufrufe nach 72 h neu")
+    return 0
 
 
 def cmd_research(args, settings) -> int:
@@ -355,6 +382,7 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--analyze-reviews", action="store_true", help="manuell gesichtete Videos auswerten")
     sp.add_argument("--reanalyze", action="store_true",
                     help="gespeicherte Ausreißer neu filtern und auswerten (ohne search-Kontingent)")
+    add("analytics", cmd_analytics, "YouTube-Statistiken pro Video abrufen (Analytics API)")
     add("bot", cmd_bot, "Telegram-Review-Bot (dauerhaft)", channel=False)
     sp = add("web", cmd_web, "Webinterface + Zeitplan (dauerhaft)", channel=False)
     sp.add_argument("--port", type=int, default=8080)
