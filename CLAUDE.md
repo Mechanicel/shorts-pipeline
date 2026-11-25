@@ -48,7 +48,7 @@ eigenen Quellen → neuer Eintrag in `config/channels.yaml`, eigene `credentials
 | `analytics.py` | YouTube Analytics API (`yt-analytics.readonly`, Token mit beiden Scopes via `auth_youtube.py`): täglich views/engagedViews/Ø-Dauer/Ø-%/Likes/Kommentare/Shares in `yt_stats`, Aufrufe nach 72 h in `topics.yt_views_72h`, Stil-Vergleich im Dashboard. „Angesehen vs. weggewischt“ liefert die API NICHT → Eingabefeld (`topics.yt_viewed_rate`) |
 | `actions.py` | Freigeben/Ablehnen/`regenerate` für Bot, CLI und Web (entfernt alte Telegram-Buttons) |
 | `publiccheck.py` | `check-public`: Sichtbarkeit von außen (oEmbed + playabilityStatus) |
-| `web/` | Webinterface (FastAPI, Port 8080, Dienst `web`): Passwort beim ersten Start (scrypt, Tabelle `app_settings`), signierte Cookies, Login-Sperre; Übersicht/Freigabe/Upload/Logs; **Zeitplan** (APScheduler, `schedule_<kanal>` in `app_settings`, Standard aus) startet CLI-Jobs als Subprozess (`job_runs`-Tabelle, Logs in `data/logs/`) |
+| `web/` | Webinterface (FastAPI, Port 8080, Dienst `web`): Seiten Heute · Freigabe · Videos · Statistik · Recherche · Jobs · Einstellungen (je eine Aufgabe), `views.py` = testbare Aufbereitung (Reiter, Zeitleiste, Klartext-Fehler, SVG-Diagramm), Passwort beim ersten Start (scrypt), Login-Sperre; **Zeitplan** (APScheduler, `schedule_<kanal>` in `app_settings`) startet CLI-Jobs als Subprozess (`job_runs`, Logs in `data/logs/`). **Design: `docs/ui/DESIGN.md` verbindlich** |
 | `__main__.py` | CLI: `pipeline [--dry-run] [--limit N]`, `collect`, `status`, `upload [--sofort] [--only ID]`, `check-public`, `research`, `regenerate`, `retry`, `auth-check`, `refresh-dates`, `bot`, `web`; flock auf `data/job.lock` |
 
 Status: `neu → skript → video → wartet_auf_freigabe → freigegeben → hochgeladen`; Nebenwege `verworfen`
@@ -89,6 +89,18 @@ docker compose up -d bot
   Ø ~50 % gesehen. Beste: 116 117 (Neugier-Hook „Diese Nummer …“), Unterhaltsvorschuss, DAZN. Publikum v. a. 55+.
   Doppelte Stromsteuer-Videos bekamen ~0 Reichweite → Dubletten-Schutz. Nach ~2 Wochen v1 vs. v2 vergleichen.
 - Kosten je Video in der Telegram-Review (`costs.py`): Claude exakt aus Tokens, TTS/Whisper geschätzt.
+
+## Webinterface-Design (verbindlich, Details in `docs/ui/DESIGN.md`)
+- Jede Seite hat eine Aufgabe; „Heute“ passt bei leerer „Braucht dich“-Box auf 1440×900. Neue Inhalte auf die
+  passende Seite, nicht auf Heute.
+- Ruhige Flächen (grau-blaue Neutraltöne, Linien 8 %), Primärknopf Navy, **Gelb nur als Textmarker** (aktiver
+  Menüpunkt, nächster Termin, laufender Job). Raster 4 px, Radien 6/8/12, Gewichte 400/500, Systemschrift.
+- Status nur über `_macros.html` (`badge`, `law`, `job_badge`, `style`), Datum nur über `| dt` („Mo 23.11., 17:00“),
+  relative Angaben (`| rel`) nur als grauer Zusatz. Keine Emojis, keine Ausrufezeichen, kein Punkt am Ende von Labels.
+- Fehler in Klartext (`views.humanize_error`), technisches Detail aufklappbar. Zahlen rechtsbündig mit tabular-nums.
+- Mobil: keine horizontale Scrollleiste, Tabellen → Karten (`table.compact`, `td.inline`).
+- Nach UI-Änderungen `./deploy/ui_check.sh` laufen lassen (Screenshots in `docs/ui/`, prüft Höhe, Scrollleisten,
+  Konsolenfehler). Entstanden mit dem Skill unslop (@heydamir, CC BY 4.0).
 
 ## Pixabay-Regeln (verbindlich)
 - Suchanfragen 24 h cachen (`search_*.json`), Videos herunterladen statt hotlinken, max. 100 Requests/Minute

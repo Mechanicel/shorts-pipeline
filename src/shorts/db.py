@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS topics (
     yt_viewed_rate TEXT,             -- „Angesehen vs. weggewischt“ in % (von Hand aus Studio, API liefert ihn nicht)
     yt_views_72h  TEXT,              -- Aufrufe der ersten 72 h laut Analytics API
     video_seconds TEXT,              -- Länge des fertigen Videos
+    yt_deleted_at TEXT,              -- wann die Löschung zuerst erkannt wurde (check-public)
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
     UNIQUE(channel, url)
@@ -100,6 +101,11 @@ CREATE TABLE IF NOT EXISTS job_runs (
     log_path    TEXT,
     result_status  TEXT,            -- ok | warn | error
     result_summary TEXT
+);
+CREATE TABLE IF NOT EXISTS yt_visibility_log (
+    topic_id   INTEGER NOT NULL,
+    checked_at TEXT NOT NULL,
+    visibility TEXT NOT NULL        -- nur Wechsel werden protokolliert
 );
 CREATE TABLE IF NOT EXISTS upload_counts (
     day      TEXT PRIMARY KEY,      -- Datum in America/Los_Angeles (YouTube-Reset)
@@ -147,6 +153,7 @@ class Topic:
     yt_viewed_rate: str | None
     yt_views_72h: str | None
     video_seconds: str | None
+    yt_deleted_at: str | None
     created_at: str
     updated_at: str
 
@@ -177,7 +184,7 @@ class Database:
         """Fehlende Spalten bei bestehenden Datenbanken ergänzen (nur additive Änderungen)."""
         wanted = {"topics": ("background_credit", "cost_json", "yt_visibility", "yt_checked_at", "yt_published_at",
                              "triage", "triage_score", "style", "yt_viewed_rate", "yt_views_72h",
-                             "video_seconds"),
+                             "video_seconds", "yt_deleted_at"),
                   "job_runs": ("result_status", "result_summary")}
         # Alte Einheiten-Zählung (1.600 je Upload) einmalig in Upload-Anzahl übernehmen
         if not self._conn.execute("SELECT 1 FROM upload_counts LIMIT 1").fetchone():
@@ -323,6 +330,37 @@ class Database:
 
     def recent_jobs(self, limit: int = 15) -> list[dict[str, Any]]:
         rows = self._conn.execute("SELECT * FROM job_runs ORDER BY id DESC LIMIT ?", (limit,))
+        return [dict(r) for r in rows]
+
+    JOB_FILTERS = {"fehler": "(result_status='error' OR (finished_at IS NOT NULL AND result_status IS NULL "
+                              "AND returncode != 0))",
+                   "warnungen": "result_status='warn'"}
+
+    def jobs_page(self, flt: str = "", page: int = 1, per_page: int = 25) -> tuple[list[dict[str, Any]], int]:
+        """Job-Protokoll mit Filter (alle | fehler | warnungen) und Seitenumbruch. Liefert (Zeilen, Gesamtzahl)."""
+        where = f"WHERE {self.JOB_FILTERS[flt]}" if flt in self.JOB_FILTERS else ""
+        total = self._conn.execute(f"SELECT COUNT(*) FROM job_runs {where}").fetchone()[0]
+        rows = self._conn.execute(f"SELECT * FROM job_runs {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+                                  (per_page, max(page - 1, 0) * per_page))
+        return [dict(r) for r in rows], total
+
+    def job_problems_since(self, iso: str) -> int:
+        return self._conn.execute(f"SELECT COUNT(*) FROM job_runs WHERE started_at >= ? AND "
+                                  f"{self.JOB_FILTERS['fehler']}", (iso,)).fetchone()[0]
+
+    def log_visibility(self, topic_id: int, visibility: str, checked_at: str) -> bool:
+        """Protokolliert die Sichtbarkeit, wenn sie sich geändert hat. True = Wechsel."""
+        last = self._conn.execute("SELECT visibility FROM yt_visibility_log WHERE topic_id=? ORDER BY checked_at "
+                                  "DESC, rowid DESC LIMIT 1", (topic_id,)).fetchone()
+        if last and last[0] == visibility:
+            return False
+        self._conn.execute("INSERT INTO yt_visibility_log(topic_id, checked_at, visibility) VALUES (?,?,?)",
+                           (topic_id, checked_at, visibility))
+        return True
+
+    def visibility_history(self, topic_id: int) -> list[dict[str, Any]]:
+        rows = self._conn.execute("SELECT checked_at, visibility FROM yt_visibility_log WHERE topic_id=? "
+                                  "ORDER BY checked_at, rowid", (topic_id,))
         return [dict(r) for r in rows]
 
     def get_job(self, job_id: int) -> dict[str, Any] | None:

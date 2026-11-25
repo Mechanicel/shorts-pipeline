@@ -24,14 +24,18 @@ Im Heimnetz unter **`http://<server-ip>:8080`** (Dienst `web`, startet mit Docke
 Beim ersten Aufruf legst du ein Passwort fest (nur als scrypt-Hash gespeichert); danach Anmeldung,
 Sperre nach 5 Fehlversuchen. Passwort vergessen: `docker compose run --rm job web-reset-password`.
 
-- **Übersicht:** neue Videos erstellen (1–7), Videos ansehen mit Sprechtext, Belegen, Warnungen und Kosten,
-  Freigeben / Ablehnen / Neu erzeugen, freigegebene Videos hochladen (nächster Termin, Wunschtermin oder sofort),
-  Sichtbarkeit prüfen, zuletzt hochgeladene Videos mit YouTube-/Studio-Links, Job-Verlauf mit Logs, Kosten 7/30 Tage.
-- **Zeitplan & Einstellungen:** an welchen Wochentagen und um wie viel Uhr Videos erstellt werden, wie viele pro
-  Lauf, Upload-Uhrzeit, Veröffentlichungstermine, Passwort ändern.
+| Seite | Wofür |
+|---|---|
+| **Heute** | Kennzahlen (wartet, Vorrat, Aufrufe 7 Tage, Kosten), „Braucht dich“ (Fehler, Fristen, Vorrat), nächste 7 Termine, Videos erstellen |
+| **Freigabe** | Video, Tafel (v3), Skript, Belege, Warnungen ansehen; Freigeben / Ablehnen / Neu erzeugen; freigegebene Videos hochladen |
+| **Videos** | Geplant · Öffentlich · Abgelehnt/Verworfen · Gelöscht, Klick auf eine Zeile zeigt alle Details und Links |
+| **Statistik** | Stil-Vergleich v1/v2/v3, Diagramm „angesehen vs. weggewischt“, Werte aus YouTube Studio gesammelt eintragen |
+| **Recherche** | Ausreißer-Recherche starten, Treffer ansehen und die ersten 3 Sekunden sichten |
+| **Jobs** | Protokoll aller Läufe mit Filter und Logs |
+| **Einstellungen** | Zeitplan für Erstellen und Upload, Veröffentlichungstermine, Passwort |
 
-Der Zeitplan läuft im Web-Dienst (APScheduler) und ist anfangs **aus**. Solange die systemd-Timer (siehe unten)
-aktiv sind, nicht einschalten – sonst laufen Erstellen und Upload doppelt. Port 8080 nicht ins Internet freigeben.
+Der Zeitplan läuft im Web-Dienst (APScheduler); die früheren systemd-Timer sind deaktiviert. Port 8080 nicht ins
+Internet freigeben. Gestaltungsregeln: `docs/ui/DESIGN.md`, Screenshots und Prüfung: `./deploy/ui_check.sh`.
 
 ## Ein Video von Hand erstellen und posten
 

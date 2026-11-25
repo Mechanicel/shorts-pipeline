@@ -409,11 +409,21 @@ class ResearchStore:
     def reviewed(self) -> list[dict]:
         rows = self.conn.execute(
             "SELECT v.video_id, v.title, v.channel_title, v.duration_s, v.views, v.score, r.* "
-            "FROM research_reviews r JOIN research_videos v USING(video_id) ORDER BY v.score DESC")
+            f"FROM research_reviews r JOIN research_videos v USING(video_id) WHERE {self.REVIEWABLE} "
+            "ORDER BY v.score DESC")
         return [dict(r) for r in rows]
 
+    # Eine Regel für Kopfzeile UND Auswertung: nur Sichtungen zu Videos, die noch im Bestand und nicht
+    # als Politik/Satire aussortiert sind, zählen als „auswertbar“.
+    REVIEWABLE = "COALESCE(v.relevant, '') != 'nein'"
+
     def review_count(self) -> int:
-        return self.conn.execute("SELECT COUNT(*) FROM research_reviews").fetchone()[0]
+        return self.conn.execute("SELECT COUNT(*) FROM research_reviews r JOIN research_videos v USING(video_id) "
+                                 f"WHERE {self.REVIEWABLE}").fetchone()[0]
+
+    def get_outlier(self, video_id: str) -> dict | None:
+        rows = [r for r in self.outliers(limit=2000) if r["video_id"] == video_id]
+        return rows[0] if rows else None
 
     def start_run(self, terms: int) -> int:
         return self.conn.execute("INSERT INTO research_runs(started_at, terms) VALUES (?,?)",

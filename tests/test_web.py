@@ -141,11 +141,12 @@ def test_freigeben_im_web(env) -> None:
     video = settings.output_dir / "short.mp4"
     video.write_bytes(b"mp4")
     tid = _waiting_topic(settings, video)
-    page = client.get("/").text
+    assert '<span class="count" aria-label="1 warten">1</span>' in client.get("/").text  # Badge in der Navigation
+    page = client.get("/freigabe").text
     assert f"#{tid}" in page and "Freigeben" in page
     assert client.get(f"/media/{tid}.mp4").content == b"mp4"
     r = client.post(f"/topics/{tid}/approve")
-    assert "freigegeben" in r.text
+    assert "freigegeben" in r.text and r.url.path == "/freigabe"
     assert Database(settings.db_path).get(tid).status == Status.FREIGEGEBEN
 
 
@@ -205,7 +206,7 @@ def test_freigabe_direkt_aus_status_video(env) -> None:
     tid = db.add_topic("de", "https://bund.de/v", "Q", "T")
     db.transition(tid, Status.SKRIPT, script_json=json.dumps(sample_data.SAMPLE_SCRIPT))
     db.transition(tid, Status.VIDEO, video_path=str(settings.output_dir / "x.mp4"))
-    assert "noch nicht in Telegram" in client.get("/").text   # sofort sichtbar, kein "In Arbeit" mehr
+    assert "noch nicht in Telegram" in client.get("/freigabe").text   # sofort sichtbar, kein "In Arbeit" mehr
     client.post(f"/topics/{tid}/approve")
     assert Database(settings.db_path).get(tid).status == Status.FREIGEGEBEN
 
@@ -227,14 +228,15 @@ def test_job_namen_und_log_links() -> None:
     assert job_label(json.dumps(["upload", "--channel", "de", "--sofort", "--mode", "api"])) == "Upload · sofort"
     assert job_label(json.dumps(["upload", "--channel", "de", "--only", "623"])) == "Upload · nächste Termine · #623"
     assert job_label(json.dumps(["pipeline", "--channel", "de", "--limit", "3"])) == "Videos erstellen (3)"
-    assert linkify_topics("Video #102 fertig") == 'Video <a href="/#t102">#102</a> fertig'
+    assert linkify_topics("Video #102 fertig") == 'Video <a href="/videos/102">#102</a> fertig'
 
 
 def test_404_als_html_seite(env) -> None:
     _, client = env
     _setup(client)
     r = client.get("/jobs/99999")
-    assert r.status_code == 404 and "<h1>Fehler 404</h1>" in r.text and "Zur Übersicht" in r.text
+    assert r.status_code == 404 and "Fehler 404" in r.text and "Seite oder Eintrag nicht gefunden" in r.text
+    assert "Zu Heute" in r.text
 
 
 def test_einstellungen_warnt_bei_ungleichgewicht(env) -> None:
@@ -256,13 +258,15 @@ def test_recherche_seite_und_sichtung(env) -> None:
     _setup(client)
     store = ResearchStore(Database(settings.db_path))
     run_research(YouTubeAPI("k", get=FakeYouTube()), store, CFG, now=NOW)
-    r = client.get("/research?sort=views")
-    assert r.status_code == 200
-    assert "Achtung: Rente steigt um 50 €" in r.text and "https://www.youtube.com/shorts/v1" in r.text
-    assert "versteckt" in r.text and "Muster auswerten" in r.text and "(0 / 15)" in r.text
+    r = client.get("/research?sort=views")   # alte Adresse leitet weiter
+    assert r.status_code == 200 and r.url.path == "/recherche"
+    assert "Achtung: Rente steigt um 50 €" in r.text and "/recherche/v1" in r.text
+    assert "versteckt" in r.text and "Muster auswerten" in r.text and "0 von 15 auswertbar" in r.text
+    detail = client.get("/recherche/v1").text
+    assert "https://www.youtube.com/shorts/v1" in detail and "Sichtung der ersten 3 Sekunden" in detail
     r = client.post("/research/v1/review", data={"face": "nein", "voice": "KI", "first_frame": "Text-Tafel",
                                                  "hook_type": "Zahl", "music": "nein", "notes": "x"},
                     follow_redirects=False)
     assert r.status_code == 303
-    assert store.review_count() == 1 and "(1 / 15)" in client.get("/research").text
+    assert store.review_count() == 1 and "1 von 15 auswertbar" in client.get("/recherche").text
     assert client.post("/research/..%2Fetc/review", data={}).status_code == 404

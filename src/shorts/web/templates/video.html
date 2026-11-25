@@ -1,0 +1,81 @@
+{% extends "base.html" %}{% import "_macros.html" as ui %}{% block title %}#{{ t.id }}{% endblock %}
+{% block content %}
+<p style="margin-bottom:8px"><a href="/videos">← Videos</a></p>
+<div class="page-head">
+  <div><h1>#{{ t.id }} {{ s_.get("title", t.title) }}</h1>
+    <div class="row" style="margin-top:8px">{{ ui.badge(state) }} <span class="style-tag">{{ style }}</span>
+      {% if t.publish_at and state != "gelöscht" %}<span class="muted">Termin {{ ui.when(t.publish_at) }}</span>{% endif %}
+      {% if state == "gelöscht" %}<span class="muted">gelöscht (erkannt {{ t.yt_deleted_at | dt if t.yt_deleted_at else "unbekannt" }})</span>{% endif %}</div></div>
+  <div class="row">{% if t.youtube_id %}
+    <a class="btn secondary" href="https://youtu.be/{{ t.youtube_id }}" target="_blank" rel="noopener">YouTube <span class="icon">&#xe0b9;</span></a>
+    <a class="btn secondary" href="{{ studio_url.format(id=t.youtube_id) }}" target="_blank" rel="noopener">Studio <span class="icon">&#xe0b9;</span></a>{% endif %}
+  </div>
+</div>
+{% if error %}<div class="flash err">{{ error.text }}<details><summary class="muted">Technisches Detail</summary><code>{{ error.detail }}</code></details></div>{% endif %}
+
+<div style="display:grid;grid-template-columns:200px 1fr 320px;gap:24px;align-items:start" class="detail-grid">
+  <div class="stack-16">
+    {% if t.video_path %}<video class="preview" src="/media/{{ t.id }}.mp4" controls preload="metadata"></video>{% endif %}
+    {% if has_board %}<a href="/media/{{ t.id }}/board.png" target="_blank"><img class="board" src="/media/{{ t.id }}/board.png" alt="Tafel"></a>{% endif %}
+  </div>
+
+  <div class="stack-16">
+    <section class="card"><h2>Skript</h2>
+      <p>{{ s_.get("narration", "–") }}</p>
+      {% if s_.get("items") %}
+        <div class="table-card"><table><tbody>{% for it in s_["items"] %}<tr>
+          <td data-label="Punkt">{{ it.label }}{% if it.note %}<br><span class="muted">{{ it.note }}</span>{% endif %}</td>
+          <td class="num" data-label="Änderung">{% if it.old_value %}<s class="muted">{{ it.old_value }}</s> → {% endif %}{{ it.new_value }}</td>
+          <td data-label="Status">{{ ui.law(it.status) }}</td></tr>{% endfor %}</tbody></table></div>
+      {% elif s_.get("key_facts") %}<p class="muted">Grafik: {% for f in s_["key_facts"] %}{{ f.value }} = {{ f.label }}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+      {% if t.note and not error %}<p class="note" style="margin-top:12px">{{ t.note }}</p>{% endif %}
+    </section>
+    <section class="card"><h2>Belege</h2>
+      {% set ev = s_.get("evidence") or [] %}
+      {% if s_.get("items") %}<ul style="margin:0;padding-left:20px">{% for it in s_["items"] %}<li style="margin-bottom:8px">{{ it.label }}<br><span class="muted">„{{ it.evidence }}“</span></li>{% endfor %}</ul>
+      {% elif ev %}<ul style="margin:0;padding-left:20px">{% for e in ev %}<li style="margin-bottom:8px">{{ e.claim }}<br><span class="muted">„{{ e.quote }}“</span></li>{% endfor %}</ul>
+      {% else %}<p class="muted">Keine Belege gespeichert</p>{% endif %}
+      <p class="muted" style="margin:12px 0 0">{{ t.source_name }} · Quelle {{ source_date_label(t.published_at) }} · <a href="{{ t.url }}" target="_blank" rel="noopener">Quelle öffnen</a></p>
+    </section>
+    <section class="card"><h2>YouTube-Angaben</h2>
+      <form method="post" action="/topics/{{ t.id }}/meta" class="fields">
+        <input type="hidden" name="next" value="/videos/{{ t.id }}">
+        <label>Titel <input name="title" maxlength="100" required value="{{ s_.get('title', t.title) }}"></label>
+        <label>Beschreibung <textarea name="description" rows="3">{{ s_.get("description", "") }}</textarea></label>
+        <label>Hashtags <input name="hashtags" value="{{ s_.get('hashtags', [])|join(' ') }}"></label>
+        <p class="muted" style="margin:0">Änderungen wirken nur auf Videos, die noch nicht hochgeladen sind</p>
+        <div><button class="secondary">Speichern</button></div>
+      </form>
+    </section>
+  </div>
+
+  <aside class="stack-16">
+    <section class="card"><h2>Zahlen</h2>
+      {% if stats %}<table><tbody>
+        <tr><td>Aufrufe</td><td class="num">{{ "{:,}".format(stats.views or 0).replace(",", ".") }}</td></tr>
+        <tr><td>Engaged Views</td><td class="num">{{ "{:,}".format(stats.engaged_views or 0).replace(",", ".") }}</td></tr>
+        <tr><td>Ø gesehen</td><td class="num">{{ "%.0f"|format(stats.avg_view_pct or 0) }} %</td></tr>
+        <tr><td>Ø Wiedergabedauer</td><td class="num">{{ "%.0f"|format(stats.avg_view_duration or 0) }} s</td></tr>
+        <tr><td>Aufrufe nach 72 h</td><td class="num">{{ t.yt_views_72h or "–" }}</td></tr>
+        <tr><td>Likes · Kommentare · Shares</td><td class="num">{{ stats.likes or 0 }} · {{ stats.comments or 0 }} · {{ stats.shares or 0 }}</td></tr>
+      </tbody></table><p class="muted" style="margin:8px 0 0">Stand {{ stats.day }}</p>
+      {% else %}<p class="muted" style="margin:0">Noch keine Analytics-Daten</p>{% endif %}
+    </section>
+    {% if t.youtube_id %}<section class="card"><h2>Angesehen vs. weggewischt</h2>
+      <form method="post" action="/topics/{{ t.id }}/viewed-rate" class="row">
+        <input type="hidden" name="next" value="/videos/{{ t.id }}">
+        <label for="rate" class="sr-only">Prozent</label>
+        <input id="rate" name="rate" inputmode="decimal" style="width:96px" value="{{ (t.yt_viewed_rate or '')|replace('.', ',') }}" placeholder="z. B. 42"> <span class="muted">%</span>
+        <button class="secondary small">Speichern</button></form>
+      <p class="muted" style="margin:8px 0 0">Wert aus YouTube Studio, die API liefert ihn nicht</p></section>{% endif %}
+    <section class="card"><h2>Kosten</h2><p style="margin:0">{{ format_cost(t.cost_json, eur) }}</p></section>
+    <section class="card"><h2>Sichtbarkeit</h2>
+      {% if history %}<table><tbody>{% for h in history %}<tr><td class="num">{{ h.checked_at | dt }}</td><td>{{ ui.badge(h.visibility) }}</td></tr>{% endfor %}</tbody></table>
+      {% else %}<p class="muted" style="margin:0">Noch nicht geprüft</p>{% endif %}
+      {% if t.yt_published_at %}<p class="muted" style="margin:8px 0 0">Veröffentlicht {{ t.yt_published_at | dt }}</p>{% endif %}
+    </section>
+  </aside>
+</div>
+<style>@media (max-width:1100px) { .detail-grid { grid-template-columns:200px 1fr !important; } .detail-grid aside { grid-column:1 / -1; } }
+@media (max-width:720px) { .detail-grid { grid-template-columns:1fr !important; } video.preview, img.board { width:100%; } }</style>
+{% endblock %}

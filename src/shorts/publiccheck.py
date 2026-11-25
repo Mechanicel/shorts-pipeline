@@ -73,23 +73,36 @@ def run_check(db: Database, channel: str, extra_ids: list[str] | None = None, ch
     if not rows:
         report(WARN, "Nichts zu prüfen – keine hochgeladenen Videos mit YouTube-ID.")
         return 0
-    findings, counts = [], {}
+    findings, counts, known_deleted = [], {}, 0
+    previous = {t.id: t for t in topics}
     for tid, vid, publish_at, title in rows:
         v = checker(vid)
         counts[v.label] = counts.get(v.label, 0) + 1
+        before = previous.get(tid)
+        was_deleted = bool(before and (before.yt_deleted_at or before.yt_visibility == DELETED))
         if tid is not None:
             fields = {"yt_visibility": v.label, "yt_checked_at": now_iso}
             if v.publish_date:
                 fields["yt_published_at"] = v.publish_date
+            if v.label == DELETED and not (before and before.yt_deleted_at):
+                fields["yt_deleted_at"] = now_iso
             db.update_fields(tid, **fields)
+            db.log_visibility(tid, v.label, now_iso)
         due = publish_at and datetime.fromisoformat(publish_at.replace("Z", "+00:00")) <= now
         flag = ""
-        if v.label == DELETED:
-            flag = "  ⚠️ auf YouTube nicht (mehr) vorhanden"
-            findings.append(f"#{tid or vid} gelöscht")
+        # Warnung nur bei neuen Befunden – eine schon einmal erkannte Löschung meldet sich nicht jeden Tag neu
+        if v.label == DELETED and was_deleted:
+            flag = "  (gelöscht, bereits bekannt)"
+            known_deleted += 1
+        elif v.label == DELETED:
+            flag = "  ⚠️ neu gelöscht"
+            findings.append(f"#{tid or vid} neu gelöscht")
         elif due and v.label != PUBLIC:
             flag = "  ⚠️ Termin vorbei, aber nicht öffentlich"
             findings.append(f"#{tid or vid} nicht öffentlich trotz Termin")
+        elif v.label == PRIVATE and not publish_at and tid is not None:
+            flag = "  ⚠️ unerwartet privat (kein Termin)"
+            findings.append(f"#{tid} unerwartet privat")
         elif v.label == PUBLIC and publish_at and not due:
             flag = "  (schon vor dem Termin öffentlich – von Hand veröffentlicht)"
         when = f"Termin {publish_at}" if publish_at else "ohne Termin"
@@ -97,6 +110,8 @@ def run_check(db: Database, channel: str, extra_ids: list[str] | None = None, ch
         if v.reason and v.label != PUBLIC:
             print(f"       YouTube: {v.reason}")
     overview = ", ".join(f"{n} {label}" for label, n in counts.items())
+    if known_deleted:
+        overview += f"; davon {known_deleted} bekannt gelöscht"
     if findings:
         report(WARN, f"{plural(len(rows), 'Video', 'Videos')} geprüft ({overview}) – " + "; ".join(findings))
     else:

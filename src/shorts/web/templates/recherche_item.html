@@ -1,0 +1,37 @@
+{% extends "base.html" %}{% import "_macros.html" as ui %}{% block title %}Sichtung{% endblock %}
+{% block content %}
+<p style="margin-bottom:8px"><a href="/recherche">← Recherche</a></p>
+<div class="page-head">
+  <div><h1>{{ r.title }}</h1>
+    <p class="sub">{{ r.channel_title }} · {{ "versteckte Abozahl" if r.subs_hidden else ("{:,}".format(r.subs or 0).replace(",", ".") ~ " Abos") }} · veröffentlicht {{ r.published_at | dt }}</p></div>
+  <a class="btn secondary" href="{{ short_url(r.video_id) }}" target="_blank" rel="noopener">Short ansehen <span class="icon">&#xe0b9;</span></a>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 360px;gap:24px;align-items:start" class="detail-grid">
+  <div class="stack-16">
+    <section class="card"><h2>Kennzahlen</h2><table><tbody>
+      <tr><td>Score</td><td class="num">{{ "%.1f"|format(r.score or 0)|replace(".", ",") }}× des Kanal-Medians</td></tr>
+      <tr><td>Aufrufe</td><td class="num">{{ "{:,}".format(r.views).replace(",", ".") }}{% if r.n_snapshots > 1 %} <span class="muted">(+{{ "{:,}".format(r.views - r.first_views).replace(",", ".") }} seit Fund)</span>{% endif %}</td></tr>
+      <tr><td>Kanal-Median</td><td class="num">{{ "{:,}".format((r.channel_median or 0)|int).replace(",", ".") }}</td></tr>
+      <tr><td>Aufrufe pro Tag</td><td class="num">{{ "{:,}".format((r.views_per_day or 0)|int).replace(",", ".") }}</td></tr>
+      <tr><td>Länge</td><td class="num">{{ r.duration_s }} s</td></tr>
+      <tr><td>Suchbegriff</td><td class="num">{{ r.search_term }}</td></tr>
+    </tbody></table>
+    {% if r.relevant == "nein" %}<p class="note" style="margin:12px 0 0">Aussortiert: {{ r.relevant_reason }}</p>{% endif %}</section>
+    {% if r.description %}<section class="card"><h2>Beschreibung</h2><p style="white-space:pre-line;font-size:14px;margin:0">{{ r.description[:800] }}</p>
+      {% if tags %}<div class="chips" style="margin-top:12px">{% for tg in tags[:15] %}<span class="style-tag">{{ tg }}</span>{% endfor %}</div>{% endif %}</section>{% endif %}
+  </div>
+  <section class="card"><h2>Sichtung der ersten 3 Sekunden</h2>
+    <form method="post" action="/recherche/{{ r.video_id }}/sichtung" class="fields">
+      {% for key, label in [("face", "Gesicht"), ("voice", "Stimme"), ("first_frame", "Bild in Sekunde 1"), ("hook_type", "Hook-Typ"), ("music", "Musik")] %}
+      <label>{{ label }} <select name="{{ key }}"><option value="">–</option>
+        {% for opt in fields[key] %}<option {% if r[key] == opt %}selected{% endif %}>{{ opt }}</option>{% endfor %}</select></label>
+      {% endfor %}
+      <label>Notiz <input name="notes" maxlength="1000" value="{{ r.notes or '' }}"></label>
+      <div><button>Speichern</button></div>
+      {% if r.reviewed_at %}<p class="muted" style="margin:0">Gesichtet {{ r.reviewed_at | dt }}</p>{% endif %}
+    </form>
+  </section>
+</div>
+<style>@media (max-width:900px) { .detail-grid { grid-template-columns:1fr !important; } }</style>
+{% endblock %}

@@ -1,0 +1,92 @@
+{% extends "base.html" %}{% import "_macros.html" as ui %}{% block title %}Freigabe{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Freigabe</h1><p class="sub">{{ waiting|length }} {{ "Video wartet" if waiting|length == 1 else "Videos warten" }} · {{ approved|length }} bereit zum Hochladen</p></div>
+</div>
+
+{% for t in waiting %}{% set s = t.script or {} %}{% set badges = warning_badges(t) %}
+<article class="card" id="t{{ t.id }}" style="display:grid;grid-template-columns:200px 1fr;gap:24px">
+  <div class="stack-16">
+    <video class="preview" src="/media/{{ t.id }}.mp4" controls preload="metadata"></video>
+    {% if s.get("style") == "v3-merkliste" %}<a href="/media/{{ t.id }}/board.png" target="_blank"><img class="board" src="/media/{{ t.id }}/board.png" alt="Tafel von #{{ t.id }}"></a>{% endif %}
+  </div>
+  <div>
+    <div class="row" style="margin-bottom:8px">{{ ui.style("v3" if s.get("style") == "v3-merkliste" else "v2" if s.get("style") == "v2-hook-frame0" else "v1") }}
+      {% if t.status == "video" %}{{ ui.badge("neu", "noch nicht in Telegram") }}{% endif %}
+      {% for b in badges %}{{ ui.badge("wartet", b) }}{% endfor %}</div>
+    <h2 style="margin-bottom:4px">#{{ t.id }} {{ s.get("title", t.title) }}</h2>
+    <p class="muted">{{ t.source_name }} · Quelle {{ source_date_label(t.published_at) }} · <a href="{{ t.url }}" target="_blank" rel="noopener">Quelle öffnen</a>
+      {% if s.get("style") != "v3-merkliste" %} · {{ word_count(s.get("narration","")) }} Wörter{% endif %} · Kosten {{ format_cost(t.cost_json, eur) }}</p>
+    {% if t.note %}<p class="note">{{ t.note }}</p>{% endif %}
+
+    {% if s.get("style") == "v3-merkliste" %}
+      <p>{{ s.get("narration","") }}</p>
+      <div class="table-card"><table>
+        <thead><tr><th>Punkt</th><th>Änderung</th><th>Status</th></tr></thead>
+        <tbody>{% for it in s.get("items", []) %}<tr>
+          <td data-label="Punkt">{{ it.label }}{% if it.note %}<br><span class="muted">{{ it.note }}</span>{% endif %}</td>
+          <td data-label="Änderung" class="num">{% if it.old_value %}<s class="muted">{{ it.old_value }}</s> → {% endif %}<b style="font-weight:500">{{ it.new_value }}</b></td>
+          <td data-label="Status">{{ ui.law(it.status) }}</td></tr>
+          <tr><td colspan="3" class="muted" data-label="Beleg">„{{ it.evidence }}“</td></tr>{% endfor %}</tbody>
+      </table></div>
+      <p class="muted" style="margin-top:12px">{{ s.get("cta","") }} · Hintergrund: {{ s.get("background_query","") }}</p>
+    {% else %}
+      <p>{{ s.get("narration","") }}</p>
+      <p class="muted">Grafik: {% if s.get("date_label") %}{{ s.date_label }} · {% endif %}{% for f in s.get("key_facts", []) %}{{ f.value }} = {{ f.label }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+      <details><summary>Belege ({{ s.get("evidence", [])|length }})</summary>
+        <ul style="margin:0;padding-left:20px">{% for e in s.get("evidence", []) %}<li style="margin-bottom:8px">{{ e.claim }}<br><span class="muted">„{{ e.quote }}“</span></li>{% endfor %}</ul>
+      </details>
+    {% endif %}
+    <details style="margin-top:12px"><summary>YouTube-Titel, Beschreibung, Hashtags</summary>
+      <form method="post" action="/topics/{{ t.id }}/meta" class="fields">
+        <input type="hidden" name="next" value="/freigabe#t{{ t.id }}">
+        <label>Titel <input name="title" maxlength="100" required value="{{ s.get('title', t.title) }}"></label>
+        <label>Beschreibung <textarea name="description" rows="4">{{ s.get("description", "") }}</textarea></label>
+        <label>Hashtags <input name="hashtags" value="{{ s.get('hashtags', [])|join(' ') }}"></label>
+        <p class="muted">Quelle, Bild-Credit, Liste (bei v3) und Standard-Hashtags hängt der Upload automatisch an</p>
+        <div><button class="secondary">Speichern</button></div>
+      </form>
+    </details>
+    <div class="row" style="margin-top:16px">
+      <form method="post" action="/topics/{{ t.id }}/approve"><button class="ok">Freigeben</button></form>
+      <form method="post" action="/topics/{{ t.id }}/reject"><button class="danger">Ablehnen</button></form>
+      <form method="post" action="/topics/{{ t.id }}/regenerate"><button class="secondary">Neu erzeugen</button></form>
+    </div>
+  </div>
+</article>
+{% else %}
+<div class="card"><p class="muted" style="margin:0">Nichts wartet auf Freigabe</p></div>
+{% endfor %}
+
+<div class="section">
+  <h2>Freigegeben – bereit zum Hochladen</h2>
+  <p class="muted">{% if upload_mode == "api" %}Upload per YouTube-API{% if api_public %} · API-Uploads werden öffentlich (von außen geprüft){% endif %}{% else %}Manuell über YouTube Studio · am Termin-Tag kommt ein Upload-Paket per Telegram{% endif %}</p>
+  {% if uploads.block %}<p class="flash warn">{{ uploads.block.text }} Geplante Uploads pausieren bis dahin, von Hand geht es trotzdem</p>{% endif %}
+  {% if approved %}
+  <div class="table-card"><table>
+    <thead><tr><th style="width:96px">Vorschau</th><th>Video</th><th>Termin</th><th></th></tr></thead>
+    <tbody>{% for t in approved %}{% set s = t.script or {} %}{% set hint = slot_hints[t.id] %}<tr id="t{{ t.id }}">
+      <td data-label="Vorschau"><video src="/media/{{ t.id }}.mp4" preload="metadata" muted style="width:64px;border-radius:6px;aspect-ratio:9/16;background:#000"></video></td>
+      <td data-label="Video"><a class="rowlink" href="/videos/{{ t.id }}">#{{ t.id }} {{ s.get("title", t.title) }}</a><br>
+        <span class="muted">Quelle {{ source_date_label(t.published_at) }}</span>
+        {% if hint.warning %}<p class="note" style="margin:8px 0 0">{{ hint.warning }}</p>{% endif %}</td>
+      <td data-label="Termin"><form method="post" action="/actions/upload-one" class="row">
+        <input type="hidden" name="topic_id" value="{{ t.id }}">
+        <label for="slot{{ t.id }}" class="sr-only">Termin</label>
+        <select name="slot" id="slot{{ t.id }}">
+          <option value="next" {% if hint.slot %}selected{% endif %}>Nächster passender{% if hint.slot %} ({{ hint.slot | dt }}){% endif %}</option>
+          {% for slot in free_slots %}{% if slot != hint.slot %}<option value="{{ slot }}">{{ slot | dt }}</option>{% endif %}{% endfor %}
+          <option value="sofort" {% if not hint.slot %}selected{% endif %}>Sofort öffentlich</option>
+        </select>
+        <button {% if running %}disabled{% endif %}>Hochladen</button></form></td>
+      <td class="num" data-label=""><form method="post" action="/topics/{{ t.id }}/unapprove"><button class="secondary small">Freigabe zurücknehmen</button></form></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% if approved|length > 1 %}
+  <form method="post" action="/actions/upload" style="margin-top:16px"><input type="hidden" name="when" value="termin">
+    <button {% if running %}disabled{% endif %}>Alle {{ approved|length }} mit den nächsten freien Terminen hochladen</button></form>
+  {% endif %}
+  {% else %}<div class="card"><p class="muted" style="margin:0">Nichts freigegeben</p></div>{% endif %}
+</div>
+<style>@media (max-width:720px) { article.card { grid-template-columns:1fr !important; } video.preview, img.board { width:100%; } }</style>
+{% endblock %}

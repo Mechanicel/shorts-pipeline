@@ -1,11 +1,11 @@
-{% extends "base.html" %}{% block title %}Job #{{ job.id }}{% endblock %}
+{% extends "base.html" %}{% import "_macros.html" as ui %}{% block title %}Job #{{ job.id }}{% endblock %}
 {% block content %}
-<h1>Job #{{ job.id }}: {{ job.args | job_label }}</h1>
-<p class="muted">{{ "Zeitplan" if job.trigger == "zeitplan" else "Webinterface" }} · Start {{ job.started_at | local_time }} ·
-  Dauer {{ duration(job) }}{% if job.finished_at %} · Exit-Code {{ job.returncode }}{% endif %}</p>
-{% if job.result_summary %}<p class="flash {{ 'ok' if job.result_status == 'ok' else 'err' }}">
-  {{ {"ok": "✅", "warn": "⚠️", "error": "❌"}.get(job.result_status, "") }} {{ job.result_summary }}</p>{% endif %}
+<p style="margin-bottom:8px"><a href="/jobs">← Jobs</a></p>
+<div class="page-head">
+  <div><h1>Job #{{ job.id }} · {{ job.args | job_label }}</h1>
+    <p class="sub">{{ "Zeitplan" if job.trigger == "zeitplan" else "Webinterface" }} · Start {{ job.started_at | dt }} · Dauer {{ duration(job) }}{% if job.finished_at %} · Exit-Code {{ job.returncode }}{% endif %}</p></div>
+</div>
+{% if job.result_summary %}<div class="card" style="margin-bottom:16px"><div class="row">{{ ui.job_badge(job) }} <span>{{ job.result_summary }}</span></div></div>{% endif %}
 <pre>{{ log_html }}</pre>
-<p class="muted">Befehl: <code>{{ job.args | args_label }}</code></p>
-<a class="btn" href="/">← Übersicht</a>
+<p class="muted" style="margin-top:12px">Befehl: <code>{{ job.args | args_label }}</code></p>
 {% endblock %}

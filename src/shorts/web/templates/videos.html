@@ -1,0 +1,26 @@
+{% extends "base.html" %}{% import "_macros.html" as ui %}{% block title %}Videos{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Videos</h1><p class="sub">Sichtbarkeit zuletzt geprüft: {{ checked | dt if checked else "noch nie" }}</p></div>
+</div>
+<nav class="tabs" aria-label="Filter">
+  {% for key, label in tabs.items() %}<a href="/videos?tab={{ key }}" class="{{ 'active' if key == tab }}"{% if key == tab %} aria-current="page"{% endif %}>{{ label }}<span class="n">{{ counts[key] }}</span></a>{% endfor %}
+</nav>
+<div class="table-card"><table>
+  <thead><tr><th style="width:190px">Datum</th><th>Titel</th><th style="width:56px">Stil</th><th style="width:120px">Status</th>
+    <th class="num" style="width:96px">Aufrufe</th><th class="num" style="width:112px">Ø gesehen</th><th class="num" style="width:136px">Angesehen vs. weggewischt</th></tr></thead>
+  <tbody>
+  {% for r in rows %}{% set t = r.topic %}
+  <tr class="link" onclick="location.href='/videos/{{ t.id }}'">
+    <td data-label="Datum" style="font-variant-numeric:tabular-nums;white-space:nowrap">{{ r.date_label }}</td>
+    <td data-label="Titel" class="title-cell"><a class="rowlink" href="/videos/{{ t.id }}">{{ (t.script or {}).get("title", t.title) }}</a></td>
+    <td data-label="Stil" class="inline">{{ ui.style(r.style) }}</td>
+    <td data-label="Status" class="inline">{{ ui.badge(r.state) }}</td>
+    <td data-label="Aufrufe" class="num inline">{{ "{:,}".format(r.views).replace(",", ".") if r.views is not none else "–" }}</td>
+    <td data-label="Ø gesehen" class="num inline">{{ ("%.0f %%"|format(r.avg_pct)) if r.avg_pct is not none else "–" }}</td>
+    <td data-label="Angesehen vs. weggewischt" class="num inline">{{ (r.viewed_rate|replace(".", ",") ~ " %") if r.viewed_rate else "–" }}</td>
+  </tr>
+  {% else %}<tr><td colspan="7" class="muted">Keine Videos in diesem Reiter</td></tr>{% endfor %}
+  </tbody>
+</table></div>
+{% endblock %}

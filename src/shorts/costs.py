@@ -17,7 +17,7 @@ CLAUDE_USD_PER_MTOK: dict[str, tuple[float, float]] = {  # (input, output)
     "claude-fable-5-2": (8.00, 40.00),
 }
 
-LABELS = {"claude": "Claude", "tts": "Stimme", "whisper": "Whisper"}
+LABELS = {"claude": "Claude", "tts": "Stimme", "whisper": "Whisper", "vorauswahl": "Vorauswahl"}
 
 
 def claude_cost(model: str, input_tokens: int, output_tokens: int) -> float | None:

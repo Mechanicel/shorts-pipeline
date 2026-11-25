@@ -1,0 +1,50 @@
+{% extends "base.html" %}{% import "_macros.html" as ui %}{% block title %}Recherche{% endblock %}
+{% macro rows_table(list, empty) %}
+<div class="table-card"><table>
+  <thead><tr>{% for key, label, cls in [("score", "Score", "num"), ("", "Titel", ""), ("channel_title", "Kanal", ""), ("subs", "Abos", "num"), ("views", "Aufrufe", "num"), ("views_per_day", "pro Tag", "num"), ("duration_s", "Länge", "num"), ("", "Sichtung", "")] %}
+    <th class="{{ cls }}">{% if key %}<a href="/recherche?sort={{ key }}" style="color:inherit;text-decoration:none">{{ label }}{% if sort == key %} <span class="icon">&#xe06f;</span>{% endif %}</a>{% else %}{{ label }}{% endif %}</th>{% endfor %}</tr></thead>
+  <tbody>{% for r in list %}<tr class="link" onclick="location.href='/recherche/{{ r.video_id }}'">
+    <td class="num" data-label="Score">{{ "%.0f"|format(r.score or 0) }}×</td>
+    <td class="title-cell" data-label="Titel"><a class="rowlink" href="/recherche/{{ r.video_id }}">{{ r.title }}</a>
+      {% if r.relevant == "nein" %}<br><span class="muted">{{ r.relevant_reason }}</span>{% endif %}</td>
+    <td data-label="Kanal">{{ r.channel_title }}</td>
+    <td class="num" data-label="Abos">{{ "versteckt" if r.subs_hidden else "{:,}".format(r.subs or 0).replace(",", ".") }}</td>
+    <td class="num" data-label="Aufrufe">{{ "{:,}".format(r.views).replace(",", ".") }}</td>
+    <td class="num" data-label="pro Tag">{{ "{:,}".format((r.views_per_day or 0)|int).replace(",", ".") }}</td>
+    <td class="num" data-label="Länge">{{ r.duration_s }} s</td>
+    <td data-label="Sichtung">{% if r.reviewed_at %}<div class="chips">{{ ui.badge("gesichtet", "✓") }}{% for k in ("first_frame", "hook_type", "voice") %}{% if r[k] %}<span class="style-tag">{{ r[k] }}</span>{% endif %}{% endfor %}</div>{% else %}<span class="muted">offen</span>{% endif %}</td>
+  </tr>{% else %}<tr><td colspan="8" class="muted">{{ empty }}</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Recherche</h1>
+    <p class="sub">Shorts kleiner deutscher Kanäle, die mindestens 5× so oft laufen wie der Kanal sonst{% if last_run %} · letzter Lauf {{ last_run.started_at | dt }}, {{ last_run.search_calls or 0 }} Suchaufrufe{% if last_run.quota_stop %}, abgebrochen ({{ last_run.quota_stop }}){% endif %}{% endif %}</p></div>
+  <form method="post" action="/actions/research" class="row">
+    <label for="terms" class="muted">Suchbegriffe</label>
+    <select name="terms" id="terms">{% for n in (5, 10, 18, 40) %}<option value="{{ n }}" {% if n == 10 %}selected{% endif %}>{{ n }}</option>{% endfor %}</select>
+    <button {% if running or not has_key %}disabled{% endif %}>Recherche starten</button>
+  </form>
+</div>
+{% if not has_key %}<p class="flash warn">YT_API_KEY fehlt in .env, ohne Schlüssel kann die Recherche nicht laufen</p>{% endif %}
+
+<section class="card">
+  <div class="row" style="justify-content:space-between">
+    <div><h2 style="margin:0">Sichtung</h2>
+      <p class="muted" style="margin:4px 0 0">{{ reviewed }} von {{ min_reviews }} auswertbar · aussortierte Videos zählen nicht · pro Video die ersten 3 Sekunden ansehen</p></div>
+    <form method="post" action="/actions/research-patterns"><button class="secondary" {% if running or reviewed < min_reviews %}disabled{% endif %}>Muster auswerten</button></form>
+  </div>
+  {% if analysis %}<details style="margin-top:16px"><summary>Letzte Auswertung · {{ analysis.date }} · {{ analysis.n }} Videos</summary>
+    <div style="white-space:pre-wrap;font-size:14px">{{ analysis.text }}</div></details>{% endif %}
+</section>
+
+<div class="section">
+  <h2>Treffer <span class="muted">{{ rows|length }}</span></h2>
+  {{ rows_table(rows, "Noch keine Treffer, Recherche starten") }}
+</div>
+{% if excluded %}
+<details class="section"><summary>Aussortiert ({{ excluded|length }}) · Politik, Satire, Unterhaltung</summary>
+  {{ rows_table(excluded, "") }}
+</details>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,61 @@
+{% extends "base.html" %}{% import "_macros.html" as ui %}{% block title %}Heute{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Heute</h1><p class="sub">{{ now.isoformat() | day }}</p></div>
+  <div class="row-12">
+    <form method="post" action="/actions/new-video" class="row">
+      <label for="count" class="sr-only">Anzahl</label>
+      <select name="count" id="count">{% for n in range(1, 8) %}<option value="{{ n }}">{{ n }}</option>{% endfor %}</select>
+      <button {% if running %}disabled{% endif %}>Videos erstellen</button>
+    </form>
+    <form method="post" action="/actions/check-public"><button class="secondary" {% if running %}disabled{% endif %}>Sichtbarkeit prüfen</button></form>
+  </div>
+</div>
+
+<div class="tiles">
+  <a class="tile" href="/freigabe"><div class="label">Wartet auf Freigabe</div>
+    <div class="figure">{{ waiting_n }}</div>
+    <div class="meta">{% if in_work %}{{ in_work|length }} in Arbeit{% else %}zur Freigabe{% endif %}</div></a>
+  <a class="tile" href="/videos"><div class="label">Vorrat</div>
+    <div class="figure {{ 'bad' if stock.days < 3 }}">{{ stock.videos }} {{ "Video" if stock.videos == 1 else "Videos" }}</div>
+    <div class="meta">{% if stock.last %}bis {{ stock.last.isoformat() | dt }}{% else %}nichts geplant{% endif %}</div></a>
+  <a class="tile" href="/statistik"><div class="label">Aufrufe 7 Tage</div>
+    <div class="figure">{% if views7 is not none %}{{ "{:,}".format(views7).replace(",", ".") }}{% else %}–{% endif %}</div>
+    <div class="meta">{% if views7 is not none %}laut YouTube Analytics{% else %}noch keine Daten{% endif %}</div></a>
+  <div class="tile"><div class="label">Kosten 30 Tage</div>
+    <div class="figure">{{ "%.2f"|format(cost_month*eur) | replace(".", ",") }} €</div>
+    <div class="meta">Ø {{ "%.2f"|format(avg_video*eur) | replace(".", ",") }} € pro Video</div></div>
+</div>
+
+<div class="section">
+  <h2>Braucht dich</h2>
+  {% if attention %}
+  <div class="table-card"><table class="compact">
+    <tbody>{% for a in attention %}<tr>
+      <td style="width:120px" data-label="Art">{% if a.kind == "fehler" %}{{ ui.badge("Fehler") }}{% elif a.kind == "frist" %}{{ ui.badge("Frist") }}{% elif a.kind == "vorrat" %}{{ ui.badge("wartet", "Vorrat") }}{% else %}{{ ui.badge("error", "YouTube") }}{% endif %}</td>
+      <td data-label="Was">{% if a.topic_id %}<a class="rowlink" href="/videos/{{ a.topic_id }}">#{{ a.topic_id }} {{ a.title }}</a><br>{% endif %}
+        <span>{{ a.text }}</span>
+        {% if a.detail and a.detail != a.text %}<details><summary class="muted">Technisches Detail</summary><code>{{ a.detail }}</code></details>{% endif %}</td>
+      <td class="num" data-label="Aktion">{% if a.kind == "fehler" %}<div class="row" style="justify-content:flex-end;flex-wrap:wrap">
+          <form method="post" action="/topics/{{ a.topic_id }}/retry"><input type="hidden" name="next" value="/"><button class="secondary small">Erneut versuchen</button></form>
+          <form method="post" action="/topics/{{ a.topic_id }}/regenerate"><input type="hidden" name="next" value="/"><button class="secondary small">Neu erzeugen</button></form></div>
+        {% elif a.kind == "frist" %}<a class="btn secondary small" href="/freigabe">Zur Freigabe</a>
+        {% elif a.kind == "vorrat" %}<span class="muted">Videos erstellen und freigeben</span>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="muted">Alles erledigt ✓</p>{% endif %}
+</div>
+
+<div class="section">
+  <h2>Nächste 7 Termine</h2>
+  <div class="table-card"><table class="compact">
+    <thead><tr><th style="width:240px">Termin</th><th>Video</th><th style="width:64px">Stil</th><th style="width:120px">Status</th></tr></thead>
+    <tbody>{% for r in rows %}<tr{% if r.is_next %} style="box-shadow:inset 4px 0 0 var(--marker)"{% endif %}>
+      <td data-label="Termin" style="font-variant-numeric:tabular-nums;white-space:nowrap">{{ r.when }} <span class="muted">· {{ r.rel }}</span></td>
+      <td data-label="Video" class="title-cell">{% if r.topic %}<a class="rowlink" href="/videos/{{ r.topic.id }}">{{ (r.topic.script or {}).get("title", r.topic.title) | truncate(80) }}</a>{% else %}<span class="muted">frei</span>{% endif %}</td>
+      <td data-label="Stil" class="inline">{% if r.style %}{{ ui.style(r.style) }}{% endif %}</td>
+      <td data-label="Status" class="inline">{{ ui.badge(r.state) }}</td>
+    </tr>{% else %}<tr><td colspan="4" class="muted">Keine Veröffentlichungstermine eingestellt</td></tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+{% endblock %}

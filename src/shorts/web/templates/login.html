@@ -1,10 +1,11 @@
 {% extends "base.html" %}{% block title %}Anmelden{% endblock %}{% block header %}{% endblock %}
 {% block content %}
-<div class="card" style="max-width:380px;margin:60px auto">
-  <h1>{{ channel.name }}</h1>
-  <form method="post" action="/login" class="row" style="flex-direction:column;align-items:stretch">
-    <input type="password" name="password" placeholder="Passwort" required autofocus>
-    <button class="primary">Anmelden</button>
+<section class="card" style="max-width:400px;margin:96px auto 0">
+  <h1 style="margin-bottom:4px">{{ channel.name }}</h1>
+  <p class="sub" style="margin-bottom:24px">Steuerpult für Freigabe, Termine und Zahlen</p>
+  <form method="post" action="/login" class="fields">
+    <label>Passwort <input type="password" name="password" required autofocus autocomplete="current-password"></label>
+    <div><button style="width:100%;justify-content:center">Anmelden</button></div>
   </form>
-</div>
+</section>
 {% endblock %}

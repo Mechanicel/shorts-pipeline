@@ -21,17 +21,20 @@ from ..costs import format_cost
 from ..analytics import latest_stats, style_comparison
 from ..deadline import choose_slot, deadline_of
 from ..render import probe_duration
-
-STYLE_LABELS = {"v1": "v1 (Start, ohne Hook-Tafel)", "v2-hook-frame0": "v2 Hook-Tafel (~25 s)",
-                "v3-merkliste": "v3 Merkliste (8–12 s)"}
 from ..db import Database, Status
 from ..script import word_count
 from ..review_bot import source_date_label
-from ..upload import (BERLIN, MIN_LEAD, STUDIO_URL, WOCHENTAGE, parse_publish_at, quota_reset,
+from ..upload import (BERLIN, STUDIO_URL, parse_publish_at, quota_reset,
                       upcoming_free_slots, upload_status)
 from . import auth
 from .jobs import JobRunner, args_label, tail
 from .schedule import DAY_LABELS, DAYS, Scheduler, load_schedule, save_schedule
+from .views import (STYLE_COLORS, STYLE_LONG, STYLE_SHORT, TABS, fmt_dt, fmt_rel, humanize_error, needs_attention,
+                    parse_iso, parse_rate, scatter_svg, style_key, tab_counts, timeline, video_rows, video_state,
+                    views_last_days)
+from markupsafe import Markup
+
+JOBS_PER_PAGE = 25
 
 log = logging.getLogger(__name__)
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -39,10 +42,7 @@ PUBLIC_PATHS = {"/login", "/setup", "/healthz"}
 
 
 def local_time(iso: str | None) -> str:
-    if not iso:
-        return "–"
-    dt = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(BERLIN)
-    return f"{WOCHENTAGE[dt.weekday()]} {dt:%d.%m. %H:%M}"
+    return fmt_dt(iso)
 
 
 def job_label(args_json: str) -> str:
@@ -73,7 +73,7 @@ def duration(job: dict) -> str:
 
 def linkify_topics(text: str) -> str:
     """'#123' im (bereits escapten) Log → Link zur Karte in der Übersicht."""
-    return re.sub(r"#(\d{1,6})\b", r'<a href="/#t\1">#\1</a>', text)
+    return re.sub(r"#(\d{1,6})\b", r'<a href="/videos/\1">#\1</a>', text)
 
 
 _PLAN_WORDS = re.compile(r"\b(Gesetzentwurf|Referentenentwurf|Entwurf|Eckpunkte|geplant|plant|soll(en)? künftig)\b", re.I)
@@ -115,6 +115,9 @@ def plural_de(n: int, one: str, many: str) -> str:
 
 
 TEMPLATES.env.filters["local_time"] = local_time
+TEMPLATES.env.filters["dt"] = fmt_dt
+TEMPLATES.env.filters["day"] = lambda iso: fmt_dt(iso, False)
+TEMPLATES.env.filters["rel"] = fmt_rel
 TEMPLATES.env.filters["args_label"] = args_label
 TEMPLATES.env.filters["job_label"] = job_label
 TEMPLATES.env.globals.update(duration=duration, warning_badges=warning_badges, plural=plural_de)
@@ -159,20 +162,32 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request: Request, exc: StarletteHTTPException):
-        text = {404: "Seite oder Eintrag nicht gefunden.", 405: "Diese Aktion geht so nicht."}.get(
-            exc.status_code, f"Fehler {exc.status_code}.")
-        return TEMPLATES.TemplateResponse(request, "error.html", {"channel": channel, "running": None,
-                                          "code": exc.status_code, "text": text}, status_code=exc.status_code)
+        text = {404: "Seite oder Eintrag nicht gefunden", 405: "Diese Aktion geht so nicht"}.get(
+            exc.status_code, f"Fehler {exc.status_code}")
+        return TEMPLATES.TemplateResponse(request, "error.html", {"channel": channel, "running": None, "nav": {},
+                                          "path": request.url.path, "code": exc.status_code, "text": text},
+                                          status_code=exc.status_code)
 
     @app.exception_handler(Exception)
     async def server_error(request: Request, exc: Exception):
         log.exception("Fehler bei %s", request.url.path)
-        return TEMPLATES.TemplateResponse(request, "error.html", {"channel": channel, "running": None, "code": 500,
-                                          "text": "Interner Fehler – Details stehen im Log des Web-Dienstes."},
+        return TEMPLATES.TemplateResponse(request, "error.html", {"channel": channel, "running": None, "nav": {},
+                                          "path": request.url.path, "code": 500,
+                                          "text": "Interner Fehler, Details stehen im Log des Web-Dienstes"},
                                           status_code=500)
 
     def page(request: Request, name: str, **ctx) -> HTMLResponse:
-        return TEMPLATES.TemplateResponse(request, name, {"channel": channel, "running": runner.running(), **ctx})
+        d = db()
+        running = runner.running()
+        nav = {"freigabe": len(d.by_status(Status.VIDEO, channel.key)) + len(d.by_status(Status.WARTET, channel.key)),
+               "jobs": "läuft" if running else d.job_problems_since(
+                   (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(timespec="seconds"))}
+        return TEMPLATES.TemplateResponse(request, name, {"channel": channel, "running": running, "nav": nav,
+                                                          "path": request.url.path, **ctx})
+
+    def safe_next(target: str | None, default: str) -> str:
+        """Nur interne Pfade als Rücksprung (kein offener Redirect)."""
+        return target if target and target.startswith("/") and not target.startswith("//") else default
 
     def back(msg: str = "", err: str = "", to: str = "/") -> RedirectResponse:
         q = f"?msg={quote(msg)}" if msg else (f"?err={quote(err)}" if err else "")
@@ -230,43 +245,137 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         r.delete_cookie(auth.COOKIE)
         return r
 
-    # ------------------------------------------------------------------ Übersicht
-    @app.get("/")
-    def dashboard(request: Request, msg: str = "", err: str = ""):
-        d = db()
-        now = datetime.now(timezone.utc)
+    # ------------------------------------------------------------------ Gemeinsame Daten
+    def approval_context(d: Database, now: datetime) -> dict:
         sched = load_schedule(d, channel)
-        uploaded = d.recent_topics([Status.HOCHGELADEN, Status.PAKET], 15)
-        uploads = upload_status(s, d, now)
         free_slots = upcoming_free_slots(sched["publish_slots"], d.taken_publish_slots(channel.key), now, 6)
         approved = d.by_status(Status.FREIGEGEBEN, channel.key)
         many_free = upcoming_free_slots(sched["publish_slots"], d.taken_publish_slots(channel.key), now, 40)
         slot_hints = {t.id: choose_slot(many_free, deadline_of(t.script, now.date()), now) for t in approved}
-        videos_30 = [t for t in d.recent_topics([Status.VIDEO, Status.WARTET, Status.FREIGEGEBEN, Status.PAKET,
-                                                  Status.HOCHGELADEN], 200)
-                     if t.cost_json and t.updated_at >= (now - timedelta(days=30)).isoformat()]
+        waiting = d.by_status(Status.VIDEO, channel.key) + d.by_status(Status.WARTET, channel.key)
+        return {"sched": sched, "free_slots": free_slots, "approved": approved, "slot_hints": slot_hints,
+                "waiting": waiting}
+
+    # ------------------------------------------------------------------ Heute
+    @app.get("/")
+    def heute(request: Request, msg: str = "", err: str = ""):
         from ..costs import total as cost_total
+        from ..deadline import planned_stock, stock_warning
+
+        d = db()
+        now = datetime.now(timezone.utc)
+        ctx = approval_context(d, now)
+        stock = planned_stock(d.planned_publish_times(channel.key), now)
+        month_start = (now - timedelta(days=30)).isoformat()
+        videos_30 = [t for t in d.recent_topics([Status.VIDEO, Status.WARTET, Status.FREIGEGEBEN, Status.PAKET,
+                                                  Status.HOCHGELADEN], 300)
+                     if t.cost_json and t.updated_at >= month_start]
         avg_video = (sum(cost_total(t.cost_json) for t in videos_30) / len(videos_30)) if videos_30 else 0.0
-        # Ob API-Uploads öffentlich werden, aus echten Prüfergebnissen ableiten (nicht behaupten)
-        api_public = any(t.youtube_id and t.yt_visibility == "öffentlich" for t in uploaded)
-        return page(
-            request, "dashboard.html", msg=msg, err=err,
-            waiting=d.by_status(Status.VIDEO, channel.key) + d.by_status(Status.WARTET, channel.key),
-            free_slots=free_slots, avg_video=avg_video,
-            approved=approved, slot_hints=slot_hints,
-            styles=style_comparison(d, channel.key, probe_duration), stats=latest_stats(d),
-            style_labels=STYLE_LABELS,
-            uploaded=uploaded, uploads=uploads, api_public=api_public, source_date_label=source_date_label,
-            failed=d.by_status(Status.FEHLER, channel.key),
-            in_work=d.by_status(Status.SKRIPT, channel.key),
-            counts=d.counts(channel.key), jobs=d.recent_jobs(10),
-            cost_week=d.costs_since((now - timedelta(days=7)).isoformat()),
-            cost_month=d.costs_since((now - timedelta(days=30)).isoformat()),
-            eur=s.eur_per_usd, sched=sched, next_runs=scheduler.next_runs(),
-            upload_mode=s.upload_mode, format_cost=format_cost, word_count=word_count,
-            studio_url=STUDIO_URL, day_labels=DAY_LABELS,
-            default_at=(now + MIN_LEAD).astimezone(BERLIN).strftime("%Y-%m-%dT%H:%M"),
-        )
+        deadline_warnings = [(t, h.warning) for t in ctx["approved"] if (h := ctx["slot_hints"][t.id]).warning]
+        for t in ctx["waiting"]:
+            if (dl := deadline_of(t.script, now.date())) and dl.latest_publish_day < now.astimezone(BERLIN).date():
+                deadline_warnings.append((t, f"{dl.kind} {dl.day:%d.%m.} – zum Veröffentlichen fast zu spät"))
+        block = upload_status(s, d, now)["block"]
+        attention = needs_attention(d.by_status(Status.FEHLER, channel.key), deadline_warnings,
+                                    stock_warning(stock), block["text"] if block else None)
+        return page(request, "heute.html", msg=msg, err=err, attention=attention, stock=stock,
+                    waiting_n=len(ctx["waiting"]), views7=views_last_days(d, 7),
+                    cost_month=d.costs_since(month_start), avg_video=avg_video, eur=s.eur_per_usd,
+                    rows=timeline(d, channel.key, ctx["sched"]["publish_slots"], now), now=now,
+                    in_work=d.by_status(Status.SKRIPT, channel.key))
+
+    # ------------------------------------------------------------------ Freigabe
+    @app.get("/freigabe")
+    def freigabe(request: Request, msg: str = "", err: str = ""):
+        d = db()
+        now = datetime.now(timezone.utc)
+        ctx = approval_context(d, now)
+        uploaded = d.recent_topics([Status.HOCHGELADEN, Status.PAKET], 15)
+        return page(request, "freigabe.html", msg=msg, err=err, **ctx, uploads=upload_status(s, d, now),
+                    api_public=any(t.youtube_id and t.yt_visibility == "öffentlich" for t in uploaded),
+                    upload_mode=s.upload_mode, source_date_label=source_date_label, format_cost=format_cost,
+                    word_count=word_count, eur=s.eur_per_usd)
+
+    # ------------------------------------------------------------------ Videos
+    @app.get("/videos")
+    def videos(request: Request, tab: str = "geplant", msg: str = "", err: str = ""):
+        d = db()
+        now = datetime.now(timezone.utc)
+        tab = tab if tab in TABS else "geplant"
+        rows = video_rows(d, channel.key, tab, now, latest_stats(d))
+        checked = max((t.yt_checked_at for t in d.by_status(Status.HOCHGELADEN, channel.key) if t.yt_checked_at),
+                      default=None)
+        return page(request, "videos.html", msg=msg, err=err, rows=rows, tab=tab, tabs=TABS,
+                    counts=tab_counts(d, channel.key, now), checked=checked)
+
+    @app.get("/videos/{topic_id}")
+    def video_detail(request: Request, topic_id: int, msg: str = "", err: str = ""):
+        d = db()
+        try:
+            t = d.get(topic_id)
+        except KeyError:
+            raise HTTPException(404)
+        now = datetime.now(timezone.utc)
+        return page(request, "video.html", msg=msg, err=err, t=t, s_=t.script or {}, state=video_state(t, now),
+                    style=STYLE_LONG.get(style_key(t), style_key(t)), stats=latest_stats(d).get(t.id),
+                    history=d.visibility_history(t.id), format_cost=format_cost, eur=s.eur_per_usd,
+                    studio_url=STUDIO_URL, source_date_label=source_date_label, word_count=word_count,
+                    error=humanize_error(t.note) if t.status == Status.FEHLER else None,
+                    has_board=bool(t.video_path and (Path(t.video_path).parent / "board.png").exists()))
+
+    # ------------------------------------------------------------------ Statistik
+    @app.get("/statistik")
+    def statistik(request: Request, msg: str = "", err: str = ""):
+        d = db()
+        now = datetime.now(timezone.utc)
+        stats = latest_stats(d)
+        public = video_rows(d, channel.key, "oeffentlich", now, stats)
+        styles = style_comparison(d, channel.key, probe_duration)
+        for row in styles:  # Ø gesehen % und Ø angesehen vs. weggewischt % je Stil
+            mine = [r for r in public if r.style == STYLE_SHORT.get(row["style"], row["style"])]
+            pct = [r.avg_pct for r in mine if r.avg_pct is not None]
+            rate = [float(r.viewed_rate) for r in mine if r.viewed_rate]
+            row["avg_pct"] = sum(pct) / len(pct) if pct else None
+            row["avg_rate"] = sum(rate) / len(rate) if rate else None
+            row["with_rate"] = len(rate)
+        points = [(parse_iso(r.topic.yt_published_at or r.topic.publish_at), float(r.viewed_rate), r.style,
+                   (r.topic.script or {}).get("title", r.topic.title)) for r in public if r.viewed_rate]
+        return page(request, "statistik.html", msg=msg, err=err, styles=styles, style_labels=STYLE_LONG,
+                    chart=Markup(scatter_svg([p for p in points if p[0]])), style_colors=STYLE_COLORS,
+                    missing=[r for r in public if not r.viewed_rate], n_points=len(points))
+
+    @app.post("/statistik/studio-werte")
+    async def studio_werte(request: Request):
+        form = await request.form()
+        d, saved, bad = db(), 0, []
+        for key, value in form.items():
+            if not key.startswith("rate_"):
+                continue
+            tid = int(key[5:])
+            try:
+                rate = parse_rate(str(value))
+            except ValueError:
+                bad.append(f"#{tid}")
+                continue
+            if rate is not None:
+                d.update_fields(tid, yt_viewed_rate=f"{rate:g}")
+                saved += 1
+        if bad:
+            return back(err=f"Ungültige Werte bei {', '.join(bad)} – bitte 0 bis 100 eintragen. "
+                            f"{saved} gespeichert.", to="/statistik")
+        return back(msg=f"{plural_de(saved, 'Wert', 'Werte')} gespeichert.", to="/statistik")
+
+    # ------------------------------------------------------------------ Jobs
+    @app.get("/jobs")
+    def jobs(request: Request, filter: str = "", seite: int = 1):
+        rows, total = db().jobs_page(filter, max(seite, 1), JOBS_PER_PAGE)
+        pages = max(1, -(-total // JOBS_PER_PAGE))
+        return page(request, "jobs.html", jobs=rows, total=total, flt=filter, seite=max(seite, 1), pages=pages)
+
+    @app.get("/static/lucide.ttf")
+    def icon_font():  # Lucide-Icons (ISC) lokal ausgeliefert, kein CDN
+        return FileResponse(s.assets_dir / "icons" / "lucide.ttf", media_type="font/ttf",
+                            headers={"Cache-Control": "public, max-age=604800"})
 
     @app.get("/media/{topic_id}.mp4")
     def media(topic_id: int):
@@ -289,16 +398,16 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         return FileResponse(path, media_type="image/png")
 
     # ------------------------------------------------------------------ Aktionen
-    def start(kind: str, args: list[str], label: str) -> RedirectResponse:
+    def start(kind: str, args: list[str], label: str, to: str = "/") -> RedirectResponse:
         if runner.launch(kind, args, "web") is None:
-            return back(err="Es läuft bereits ein Job – bitte warten, bis er fertig ist.")
-        return back(msg=f"{label} gestartet.")
+            return back(err="Es läuft bereits ein Job. Bitte warten, bis er fertig ist", to=to)
+        return back(msg=f"{label} gestartet", to=to)
 
     @app.post("/actions/new-video")
     def new_video(count: int = Form(1)):
         count = max(1, min(count, 10))
         return start("pipeline", ["pipeline", "--channel", channel.key, "--limit", str(count)],
-                     f"Erstellung von {count} Video(s)")
+                     f"Erstellung von {plural_de(count, 'Video', 'Videos')}")
 
     @app.post("/actions/upload")
     def upload(when: str = Form("termin"), at: str = Form("")):
@@ -313,7 +422,7 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
             args += ["--publish-at", at.replace("T", " ")]
         if when in ("sofort", "wunsch"):
             args += ["--mode", "api"]
-        return start("upload", args, "Upload")
+        return start("upload", args, "Upload", to="/freigabe")
 
     @app.post("/actions/upload-one")
     def upload_one(topic_id: int = Form(...), slot: str = Form("next")):
@@ -323,56 +432,57 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         elif slot != "next":  # konkreter Termin aus dem Dropdown (UTC-ISO)
             local = datetime.fromisoformat(slot.replace("Z", "+00:00")).astimezone(BERLIN)
             args += ["--publish-at", local.strftime("%Y-%m-%d %H:%M"), "--mode", "api"]
-        return start("upload", args, f"Upload von #{topic_id}")
+        return start("upload", args, f"Upload von #{topic_id}", to="/freigabe")
 
     @app.post("/topics/{topic_id}/viewed-rate")
-    def topic_viewed_rate(topic_id: int, rate: str = Form("")):
-        value = rate.strip().replace(",", ".").rstrip("%").strip()
-        if value:
-            try:
-                if not 0 <= float(value) <= 100:
-                    raise ValueError
-            except ValueError:
-                return back(err=f"#{topic_id}: Bitte einen Prozentwert zwischen 0 und 100 eintragen.")
-        db().update_fields(topic_id, yt_viewed_rate=value or None)
-        return back(msg=f"#{topic_id}: „Angesehen vs. weggewischt“ gespeichert.", to=f"/#t{topic_id}")
+    def topic_viewed_rate(topic_id: int, rate: str = Form(""), next: str = Form("")):
+        to = safe_next(next, f"/videos/{topic_id}")
+        try:
+            value = parse_rate(rate)
+        except ValueError:
+            return back(err=f"#{topic_id}: Bitte einen Prozentwert zwischen 0 und 100 eintragen", to=to)
+        db().update_fields(topic_id, yt_viewed_rate=f"{value:g}" if value is not None else None)
+        return back(msg=f"#{topic_id}: Angesehen vs. weggewischt gespeichert", to=to)
 
     @app.post("/topics/{topic_id}/meta")
-    def topic_meta(topic_id: int, title: str = Form(...), description: str = Form(""), hashtags: str = Form("")):
+    def topic_meta(topic_id: int, title: str = Form(...), description: str = Form(""), hashtags: str = Form(""),
+                   next: str = Form("")):
+        to = safe_next(next, "/freigabe")
         try:
             actions.update_metadata(db(), topic_id, title, description, hashtags)
         except Exception as exc:
-            return back(err=f"#{topic_id}: {exc}")
-        return back(msg=f"#{topic_id}: YouTube-Angaben gespeichert.")
+            return back(err=f"#{topic_id}: {exc}", to=to)
+        return back(msg=f"#{topic_id}: YouTube-Angaben gespeichert", to=to)
 
     @app.post("/actions/check-public")
     def check_public():
         return start("check-public", ["check-public", "--channel", channel.key], "Sichtbarkeitsprüfung")
 
     @app.post("/topics/{topic_id}/{action}")
-    def topic_action(topic_id: int, action: str):
+    def topic_action(topic_id: int, action: str, next: str = Form("")):
         d = db()
+        to = safe_next(next, "/freigabe")
         try:
             if action == "approve":
                 actions.decide(s, d, topic_id, approve=True)
-                return back(msg=f"#{topic_id} freigegeben.")
+                return back(msg=f"#{topic_id} freigegeben", to=to)
             if action == "reject":
                 actions.decide(s, d, topic_id, approve=False)
-                return back(msg=f"#{topic_id} abgelehnt.")
+                return back(msg=f"#{topic_id} abgelehnt", to=to)
             if action == "unapprove":
                 actions.unapprove(d, topic_id)
-                return back(msg=f"#{topic_id}: Freigabe zurückgenommen.")
+                return back(msg=f"#{topic_id}: Freigabe zurückgenommen", to=to)
             if action == "regenerate":
                 actions.regenerate(s, d, topic_id)
-                return back(msg=f"#{topic_id} wird beim nächsten Lauf neu erzeugt.")
+                return back(msg=f"#{topic_id} wird beim nächsten Lauf neu erzeugt", to=to)
             if action == "retry":
                 t = d.get(topic_id)
                 back_to = {"neu": Status.NEU, "skript": Status.SKRIPT, "video": Status.SKRIPT,
                            "freigegeben": Status.FREIGEGEBEN}.get(t.prev_status or "neu", Status.NEU)
                 d.transition(topic_id, back_to, note=None)
-                return back(msg=f"#{topic_id} → {back_to}.")
+                return back(msg=f"#{topic_id} wird erneut versucht", to=to)
         except Exception as exc:
-            return back(err=f"#{topic_id}: {exc}")
+            return back(err=f"#{topic_id}: {exc}", to=to)
         raise HTTPException(404)
 
     # ------------------------------------------------------------------ Zeitplan
@@ -394,26 +504,37 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
                        f"{plural_de(slots_week, 'Termin', 'Termine')} – einige Termine bleiben leer.")
         rows = [(slot.split()[0].lower()[:3], slot.split()[1]) for slot in sched["publish_slots"]]
         rows += [("", "")] * 3  # leere Zeilen zum Hinzufügen
-        return page(request, "settings.html", msg=msg, err=err, sched=sched, days=DAYS, day_labels=DAY_LABELS,
+        return page(request, "einstellungen.html", msg=msg, err=err, sched=sched, days=DAYS, day_labels=DAY_LABELS,
                     next_runs=scheduler.next_runs(), preview=preview, balance=balance, slot_rows=rows,
                     reset_time=f"{quota_reset(now):%H:%M}")
 
     # ---------------------------------------------------------------- Ausreißer-Recherche
-    @app.get("/research")
-    def research_page(request: Request, sort: str = "score", alle: int = 0, msg: str = "", err: str = ""):
+    @app.get("/recherche")
+    def recherche(request: Request, sort: str = "score", msg: str = "", err: str = ""):
         from ..research import MIN_REVIEWS_FOR_ANALYSIS, REVIEW_FIELDS, ResearchStore, short_url
 
         d = db()
         store = ResearchStore(d)
         rows = store.outliers(order=sort)
-        hidden = sum(1 for r in rows if r.get("relevant") == "nein")
-        if not alle:
-            rows = [r for r in rows if r.get("relevant") != "nein"]
-        return page(request, "research.html", rows=rows, sort=sort, alle=alle, hidden=hidden, fields=REVIEW_FIELDS,
+        return page(request, "recherche.html", rows=[r for r in rows if r.get("relevant") != "nein"],
+                    excluded=[r for r in rows if r.get("relevant") == "nein"], sort=sort, fields=REVIEW_FIELDS,
                     reviewed=store.review_count(), min_reviews=MIN_REVIEWS_FOR_ANALYSIS, last_run=store.last_run(),
                     analysis=d.get_setting("research_review_analysis"), short_url=short_url,
                     has_key=bool(s.yt_api_key), msg=msg, err=err)
 
+    @app.get("/recherche/{video_id}")
+    def recherche_item(request: Request, video_id: str, msg: str = "", err: str = ""):
+        from ..research import REVIEW_FIELDS, ResearchStore, short_url
+
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,20}", video_id):
+            raise HTTPException(404)
+        row = ResearchStore(db()).get_outlier(video_id)
+        if not row:
+            raise HTTPException(404)
+        return page(request, "recherche_item.html", r=row, fields=REVIEW_FIELDS, short_url=short_url,
+                    tags=json.loads(row.get("tags") or "[]"), msg=msg, err=err)
+
+    @app.post("/recherche/{video_id}/sichtung")
     @app.post("/research/{video_id}/review")
     async def research_review(video_id: str, request: Request):
         from ..research import ResearchStore
@@ -422,25 +543,33 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
             raise HTTPException(404)
         form = await request.form()
         ResearchStore(db()).save_review(video_id, {k: str(v) for k, v in form.items()})
-        return back(msg="Sichtung gespeichert.", to="/research")
+        return back(msg="Sichtung gespeichert", to="/recherche")
 
     @app.post("/actions/research")
     def research_run(terms: int = Form(10)):
         terms = max(1, min(terms, 40))
-        if runner.launch("research", ["research", "--channel", channel.key, "--terms", str(terms)], "web") is None:
-            return back(err="Es läuft bereits ein Job – bitte warten, bis er fertig ist.", to="/research")
-        return back(msg=f"Recherche mit {terms} Suchbegriffen gestartet.", to="/research")
+        return start("research", ["research", "--channel", channel.key, "--terms", str(terms)],
+                     f"Recherche mit {terms} Suchbegriffen", to="/recherche")
 
     @app.post("/actions/research-patterns")
     def research_patterns():
-        if runner.launch("research", ["research", "--channel", channel.key, "--analyze-reviews"], "web") is None:
-            return back(err="Es läuft bereits ein Job – bitte warten, bis er fertig ist.", to="/research")
-        return back(msg="Muster-Auswertung gestartet.", to="/research")
+        return start("research", ["research", "--channel", channel.key, "--analyze-reviews"],
+                     "Muster-Auswertung", to="/recherche")
 
-    @app.get("/settings")
-    def settings_form(request: Request, msg: str = "", err: str = ""):
+    @app.get("/einstellungen")
+    def einstellungen(request: Request, msg: str = "", err: str = ""):
         return settings_page(request, load_schedule(db(), channel), msg, err)
 
+    # Alte Adressen (Lesezeichen, Telegram-Links) leiten weiter
+    @app.get("/settings")
+    def old_settings(request: Request):
+        return RedirectResponse("/einstellungen" + (f"?{request.url.query}" if request.url.query else ""), 307)
+
+    @app.get("/research")
+    def old_research(request: Request):
+        return RedirectResponse("/recherche", status_code=307)
+
+    @app.post("/einstellungen")
     @app.post("/settings")
     async def settings_save(request: Request):
         form = await request.form()
@@ -465,19 +594,19 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         if problems:
             return settings_page(request, sched, err=" ".join(problems))
         scheduler.apply()
-        return back(msg="Zeitplan gespeichert.", to="/settings")
+        return back(msg="Zeitplan gespeichert", to="/einstellungen")
 
     @app.post("/settings/password")
     def change_password(request: Request, old: str = Form(...), new: str = Form(...), new2: str = Form(...)):
         d = db()
         if not auth.verify_password(old, d.get_setting("password_hash", "")):
-            return back(err="Altes Passwort falsch.", to="/settings")
+            return back(err="Altes Passwort falsch", to="/einstellungen")
         if new != new2:
-            return back(err="Neue Passwörter stimmen nicht überein.", to="/settings")
+            return back(err="Neue Passwörter stimmen nicht überein", to="/einstellungen")
         try:
             auth.set_password(d, new)
         except ValueError as exc:
-            return back(err=str(exc), to="/settings")
+            return back(err=str(exc), to="/einstellungen")
         return login_response(d)
 
     # ------------------------------------------------------------------ Logs

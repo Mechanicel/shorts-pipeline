@@ -1,0 +1,23 @@
+{% extends "base.html" %}{% import "_macros.html" as ui %}{% block title %}Jobs{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Jobs</h1><p class="sub">{{ total }} {{ "Eintrag" if total == 1 else "Einträge" }}</p></div></div>
+<nav class="tabs" aria-label="Filter">
+  {% for key, label in [("", "Alle"), ("fehler", "Fehler"), ("warnungen", "Warnungen")] %}<a href="/jobs{{ '?filter=' ~ key if key }}" class="{{ 'active' if key == flt }}">{{ label }}</a>{% endfor %}
+</nav>
+<div class="table-card"><table>
+  <thead><tr><th class="num" style="width:64px">#</th><th>Job</th><th style="width:120px">Auslöser</th><th style="width:170px">Start</th><th class="num" style="width:96px">Dauer</th><th>Ergebnis</th></tr></thead>
+  <tbody>{% for j in jobs %}<tr class="link" onclick="location.href='/jobs/{{ j.id }}'">
+    <td class="num inline" data-label="#"><a class="rowlink" href="/jobs/{{ j.id }}">{{ j.id }}</a></td>
+    <td data-label="Job">{{ j.args | job_label }}</td>
+    <td data-label="Auslöser" class="inline">{{ "Zeitplan" if j.trigger == "zeitplan" else "Webinterface" }}</td>
+    <td data-label="Start" style="font-variant-numeric:tabular-nums;white-space:nowrap">{{ j.started_at | dt }}</td>
+    <td class="num inline" data-label="Dauer">{{ duration(j) }}</td>
+    <td data-label="Ergebnis"><div class="row">{{ ui.job_badge(j) }} <span style="font-size:14px">{{ j.result_summary or "" }}</span></div></td>
+  </tr>{% else %}<tr><td colspan="6" class="muted">Keine Jobs in dieser Ansicht</td></tr>{% endfor %}</tbody>
+</table></div>
+{% if pages > 1 %}<div class="pager">
+  {% if seite > 1 %}<a class="btn secondary small" href="/jobs?seite={{ seite - 1 }}{{ '&filter=' ~ flt if flt }}">Neuer</a>{% endif %}
+  <span class="muted">Seite {{ seite }} von {{ pages }}</span>
+  {% if seite < pages %}<a class="btn secondary small" href="/jobs?seite={{ seite + 1 }}{{ '&filter=' ~ flt if flt }}">Älter</a>{% endif %}
+</div>{% endif %}
+{% endblock %}

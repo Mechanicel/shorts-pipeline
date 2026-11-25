@@ -1,0 +1,28 @@
+{# Gemeinsame Bausteine für alle Seiten – Status-Badges nur über diese Makros (siehe docs/ui/DESIGN.md) #}
+{% set TONE = {
+  "öffentlich": "ok", "freigegeben": "ok", "in Kraft": "ok", "beschlossen": "ok", "ok": "ok", "gesichtet": "ok",
+  "wartet": "warn", "Entwurf": "warn", "warn": "warn", "Paket gesendet": "warn", "Frist": "warn",
+  "Fehler": "bad", "gelöscht": "bad", "error": "bad", "abgelehnt": "bad", "aussortiert": "bad",
+  "geplant": "info", "in Arbeit": "info", "läuft": "info", "privat": "info",
+  "frei": "neutral", "verworfen": "neutral", "neu": "neutral"} %}
+{% set JOB_TEXT = {"ok": "erfolgreich", "warn": "Hinweis", "error": "Fehler"} %}
+
+{% macro badge(state, text=None) -%}
+  <span class="badge {{ TONE.get(state, 'neutral') }}">{{ text or state }}</span>
+{%- endmacro %}
+
+{% macro law(status) -%}{# Rechtsstatus einer Merkliste – „geplant“ hier neutral statt info #}
+  <span class="badge {{ 'neutral' if status == 'geplant' else TONE.get(status, 'neutral') }}">{{ status }}</span>
+{%- endmacro %}
+
+{% macro job_badge(job) -%}
+  {% if job.finished_at is none %}{{ badge("läuft") }}
+  {% elif job.result_status %}{{ badge(job.result_status, JOB_TEXT.get(job.result_status)) }}
+  {% elif job.returncode == 0 %}{{ badge("ok", "erfolgreich") }}{% else %}{{ badge("error", "Fehler") }}{% endif %}
+{%- endmacro %}
+
+{% macro style(key) -%}<span class="style-tag" title="Gestaltung">{{ key }}</span>{%- endmacro %}
+
+{% macro when(iso) -%}{{ iso | dt }}{% set r = iso | rel %}{% if r %} <span class="muted">· {{ r }}</span>{% endif %}{%- endmacro %}
+
+{% macro icon(code, label="") -%}<span class="icon" aria-hidden="{{ 'false' if label else 'true' }}"{% if label %} aria-label="{{ label }}"{% endif %}>{{ code|safe }}</span>{%- endmacro %}
