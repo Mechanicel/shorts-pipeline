@@ -48,6 +48,18 @@ def test_kanal_blockliste_mit_wortgrenzen() -> None:
     assert is_blocked_channel("Finanzen kompakt", "own", replace(CFG, own_channel_ids=["own"])) == "eigener Kanal"
 
 
+def test_nur_deutsche_videos() -> None:
+    from shorts.research import candidate_from_video, is_german
+    ru = candidate_from_video(video("r", "c", 1, title="В самую богатую страну Европы за 0€?! 😱"), "t")
+    de = candidate_from_video(video("d", "c", 1, title="195 € für die Schule. Reicht Kindergeld?"), "t")
+    assert not is_german(ru) and is_german(de)
+    en = video("e", "c", 1, title="Rente 2027")
+    en["snippet"]["defaultAudioLanguage"] = "en-US"
+    assert not is_german(candidate_from_video(en, "t"))
+    en["snippet"]["defaultAudioLanguage"] = "de-DE"
+    assert is_german(candidate_from_video(en, "t"))
+
+
 def test_titelmuster_gezählt() -> None:
     vids = [{"title": "Achtung: 500 € zurück ab Januar?", "duration_s": 30, "channel_title": "A"},
             {"title": "Das musst du wissen", "duration_s": 55, "channel_title": "A"},

@@ -212,6 +212,7 @@ class Candidate:
     likes: int | None
     comments: int | None
     search_term: str
+    language: str = ""  # defaultAudioLanguage bzw. defaultLanguage, falls der Kanal sie setzt
     subs: int | None = None
     subs_hidden: bool = False
     channel_median: float | None = None
@@ -231,7 +232,20 @@ def candidate_from_video(item: dict, term: str) -> Candidate | None:
         video_id=item["id"], channel_id=sn.get("channelId", ""), channel_title=sn.get("channelTitle", ""),
         title=sn.get("title", ""), description=sn.get("description", ""), tags=list(sn.get("tags", []) or []),
         duration_s=duration, published_at=sn["publishedAt"], views=views,
-        likes=_int(st, "likeCount"), comments=_int(st, "commentCount"), search_term=term)
+        likes=_int(st, "likeCount"), comments=_int(st, "commentCount"), search_term=term,
+        language=(sn.get("defaultAudioLanguage") or sn.get("defaultLanguage") or "").lower())
+
+
+_LATIN = re.compile(r"[A-Za-zÄÖÜäöüß]")
+_LETTER = re.compile(r"[^\W\d_]")
+
+
+def is_german(c: Candidate) -> bool:
+    """relevanceLanguage ist für YouTube nur ein Hinweis → selbst prüfen: gesetzte Sprache oder Schrift im Titel."""
+    if c.language:
+        return c.language.startswith("de")
+    letters = _LETTER.findall(c.title)
+    return not letters or len(_LATIN.findall(c.title)) / len(letters) >= 0.7
 
 
 def prefilter_reason(c: Candidate, cfg: ResearchConfig, now: datetime) -> str | None:
@@ -242,6 +256,8 @@ def prefilter_reason(c: Candidate, cfg: ResearchConfig, now: datetime) -> str | 
         return "zu wenig Aufrufe"
     if age_days(c.published_at, now) > cfg.max_age_days:
         return "zu alt"
+    if not is_german(c):
+        return "andere Sprache"
     return is_blocked_channel(c.channel_title, c.channel_id, cfg)
 
 
