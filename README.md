@@ -174,6 +174,8 @@ Der Bot läuft per `restart: unless-stopped` dauerhaft (`docker compose up -d bo
 - Stil: `STYLE_MODE` (`alternate`/`v2`/`v3`) gilt für Zeitplan-Läufe; im Web und per
   `pipeline --style v2|v3` bzw. `regenerate <id> --style v2|v3` lässt er sich je Lauf oder Thema festlegen.
   Von Hand gewählte Stile stehen in `topics.style_pick` (Hinweis auf der Detailseite).
+  Passt ein Thema nicht zum gewählten Stil (v3 ohne listenfähige Fakten), entsteht kein Video in einem anderen
+  Stil; der Job meldet „Kein Video: kein Thema passt zu v3“ und das Thema bleibt für später erhalten.
 
 ## Projektstruktur
 

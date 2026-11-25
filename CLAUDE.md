@@ -151,7 +151,9 @@ melden einmal, manuell geht weiter). Rate-Limits/5xx: 3 Versuche mit Backoff. Ei
 
 **Stil v3 / Vergleich (seit 25.11.):** `STYLE_MODE=alternate` (Standard) gibt dem selteneren Stil den Vorzug →
 v2 und v3 gleich oft, an wechselnden Wochentagen; Stil in `topics.style`. Von Hand gewählt (Web, `--style`) →
-`topics.style_pick`, hat Vorrang vor `STYLE_MODE`; `regenerate` ohne Stil setzt ihn zurück. v3 nicht möglich (< 3 listenfähige
+`topics.style_pick`, hat Vorrang vor `STYLE_MODE`; `regenerate` ohne Stil setzt ihn zurück.
+Fest gewählt v3, aber keine Liste möglich → **kein Ersatz-Video als v2**: Lauf-Wahl lässt das Thema offen
+(Notiz „v3 nicht möglich:“, wird in weiteren v3-Läufen übersprungen), Thema-Wahl → `fehler`. Ergebnis „Kein Video: …“. v3 nicht möglich (< 3 listenfähige
 Fakten oder nur alte Regeln) → Grund in der Notiz, Thema läuft als v2. Vorschau ohne Upload/echte DB:
 `docker compose run --rm job preview <URL> [--only v2|v3]` → Telegram. Anthropic-Clients mit `timeout=240`
 (eine hängende Verbindung blockierte sonst 10 min). Quellen: „Bundesregierung – Neuregelungen“ (Hub-Seite der

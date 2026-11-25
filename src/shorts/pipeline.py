@@ -50,6 +50,8 @@ def source_age_problem(date_str: str | None, today: datetime) -> str | None:
     return None
 
 
+V3_IMPOSSIBLE = "v3 nicht möglich:"
+
 @dataclass
 class RunReport:
     new_topics: int = 0
@@ -63,17 +65,25 @@ class RunReport:
     discard_reasons: list[str] = field(default_factory=list)
     discard_examples: list[str] = field(default_factory=list)
     checked: int = 0  # Themen, die das Skript-Modell bekommen hat
+    style_skipped: list[str] = field(default_factory=list)  # fester Stil (v3) passte nicht → kein Ersatz-Video
 
     def result(self) -> tuple[str, str]:
         """(Status, Zusammenfassung) für result.report – ✅ nur, wenn Videos entstanden sind."""
         from collections import Counter
         why = ", ".join(f"{n}× {r}" for r, n in Counter(self.discard_reasons).items())
+        unfit = (f"{plural(len(self.style_skipped), 'Thema', 'Themen')} ohne Liste für v3"
+                 if self.style_skipped else "")
         if not self.rendered and not self.errors:
             if not self.discarded and not self.checked:
                 return WARN, "Kein Video: keine offenen Themen – neue Meldungen der Quellen abwarten."
+            if self.style_skipped:
+                return WARN, ("Kein Video: kein Thema passt zu v3 (" + unfit
+                              + (f", {self.discarded} verworfen: {why}" if self.discarded else "")
+                              + "). Die Themen bleiben für v2 oder „Abwechselnd“ erhalten.")
             return WARN, f"Kein Video: {plural(self.discarded, 'Thema', 'Themen')} geprüft und verworfen ({why})."
         text = (f"{plural(self.rendered, 'Video', 'Videos')} erstellt, {self.discarded} verworfen"
-                + (f" ({why})" if why else "") + f", {plural(len(self.errors), 'Fehler', 'Fehler')}")
+                + (f" ({why})" if why else "") + (f", {unfit}" if unfit else "")
+                + f", {plural(len(self.errors), 'Fehler', 'Fehler')}")
         if self.rendered and not self.errors:
             return OK, text
         if self.rendered:
@@ -194,6 +204,8 @@ class Pipeline:
         budget_calls = self.ch.max_new_topics_per_run
         ready = [self.db.get(t.id) for t in kept]
         ready = [t for t in ready if t.status == Status.NEU and (t.prev_status or (t.triage or "").startswith("ok"))]
+        if self.style_pick == "v3":  # schon festgestellt, dass keine Liste möglich ist → nicht erneut bezahlen
+            ready = [t for t in ready if not (t.note or "").startswith(V3_IMPOSSIBLE)]
         ready.sort(key=lambda t: (t.prev_status is None, -_score(t)))
         for topic in ready:
             if budget_calls <= 0 or report.scripted >= target:
@@ -245,7 +257,11 @@ class Pipeline:
             if merk.list_possible:
                 self._save_v3(topic, merk, text, covered, report)
                 return True
-            fallback_note = f"v3 nicht möglich: {merk.list_impossible_reason or 'zu wenige listenfähige Fakten'}"
+            reason = merk.list_impossible_reason or "zu wenige listenfähige Fakten"
+            if self.style_pick or topic.style_pick:  # Stil von Hand gewählt → kein Ersatz-Video als v2
+                self._style_unfit(topic, text, reason, report)
+                return True
+            fallback_note = f"{V3_IMPOSSIBLE} {reason}"
             log.info("#%s %s – läuft als v2", topic.id, fallback_note)
         try:
             script = self.writer.write(**args)
@@ -274,6 +290,18 @@ class Pipeline:
                            script_json=json.dumps(data, ensure_ascii=False, indent=2), note=note, style=SCRIPT_STYLE)
         report.scripted += 1
         return True
+
+    def _style_unfit(self, topic: Topic, text: str, reason: str, report: RunReport) -> None:
+        """v3 fest gewählt, aber keine Liste möglich. Lauf-Wahl (--style): Thema bleibt offen für v2/automatisch.
+        Thema-Wahl (Neu erzeugen als v3): Fehler mit Klartext, damit es unter „Braucht dich“ auftaucht."""
+        note = f"{V3_IMPOSSIBLE} {reason}"
+        if self.style_pick:
+            self.db.update_fields(topic.id, source_text=text, note=note, style_pick=None)
+        else:
+            self.db.update_fields(topic.id, source_text=text)
+            self.db.transition(topic.id, Status.FEHLER, note=note + " – Neu erzeugen (automatisch oder als v2)")
+        log.info("#%s %s – kein Video (Stil fest gewählt)", topic.id, note)
+        report.style_skipped.append(f"#{topic.id} {topic.title[:60]} – {reason}")
 
     def _book_writer_cost(self, topic: Topic, report: RunReport) -> None:
         for usd in getattr(self.writer, "spent", []):
@@ -397,8 +425,12 @@ class Pipeline:
         report_result(*report.result())
         for example in report.discard_examples[:8]:  # Begründungen im Job-Log/Detail
             print(f"  verworfen: {example}", flush=True)
+        for example in report.style_skipped[:8]:
+            print(f"  passt nicht zu v3: {example}", flush=True)
         log.info(report.summary(self.ch.key))
         if not self.dry_run:
             notify(self.s, report.summary(self.ch.key)
+                   + (f"\n{len(report.style_skipped)} Themen passten nicht zu v3 (kein Ersatz-Video)."
+                      if report.style_skipped else "")
                    + ("\nDie Videos kommen gleich zur Freigabe." if report.rendered else ""))
         return report

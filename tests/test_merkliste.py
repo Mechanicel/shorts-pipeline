@@ -190,3 +190,52 @@ def test_neu_erzeugen_mit_stil() -> None:
     assert db.regenerate(tid, style_pick="v3").style_pick == "v3"
     db.transition(tid, Status.FEHLER)
     assert db.regenerate(tid).style_pick is None  # ohne Wahl wieder automatisch
+
+
+def _forced_pipe(tmp_path, writer):
+    settings = replace(Settings(), data_dir=tmp_path, output_dir=tmp_path / "out", telegram_bot_token=None,
+                       telegram_chat_id=None, style_mode="alternate")
+    ch = replace(load_channels()["de"], max_videos_per_run=1, max_new_topics_per_run=1)
+    db = Database(tmp_path / "p.sqlite3")
+
+    class NoTriage:
+        spent: list = []
+
+        def screen(self, c, covered="(none)"):
+            return {}
+    return db, Pipeline(settings, ch, db, writer=writer, tts=EspeakTTS(), triage=NoTriage())
+
+
+def _open_topic(db) -> int:
+    tid = db.add_topic("de", "https://bund.de/x", "Q", "Thema", published_at=datetime.now(timezone.utc).isoformat())
+    db.update_fields(tid, source_text=sample_data.SAMPLE_SOURCE_TEXT, triage="ok: x")
+    return tid
+
+
+def test_v3_fest_gewaehlt_ohne_liste_kein_ersatzvideo(tmp_path) -> None:
+    writer = Writer(list_possible=False)
+    db, pipe = _forced_pipe(tmp_path, writer)
+    tid = _open_topic(db)
+    pipe.style_pick = "v3"
+    report = RunReport()
+    pipe.step_script(report)
+    t = db.get(tid)
+    assert writer.calls == ["v3"]  # kein v2-Versuch
+    assert t.status == Status.NEU and t.note.startswith("v3 nicht möglich") and t.style_pick is None
+    status, text = report.result()
+    assert text.startswith("Kein Video: kein Thema passt zu v3") and "bleiben" in text
+    pipe.step_script(RunReport())  # nächster v3-Lauf bezahlt dasselbe Thema nicht noch einmal
+    assert writer.calls == ["v3"]
+    pipe.style_pick = None  # automatisch → darf als v2 laufen
+    pipe.step_script(RunReport())
+    assert db.get(tid).status == Status.SKRIPT and db.get(tid).style == STYLE_V2
+
+
+def test_thema_als_v3_neu_erzeugt_ohne_liste_wird_fehler(tmp_path) -> None:
+    writer = Writer(list_possible=False)
+    db, pipe = _forced_pipe(tmp_path, writer)
+    tid = _open_topic(db)
+    db.update_fields(tid, style_pick="v3")
+    pipe.step_script(RunReport())
+    t = db.get(tid)
+    assert writer.calls == ["v3"] and t.status == Status.FEHLER and "Neu erzeugen" in t.note
