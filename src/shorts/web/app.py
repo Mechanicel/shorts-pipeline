@@ -194,8 +194,9 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         channel = current(request)
         running = runner.running()
         nav = {"freigabe": waiting_count(d, channel.key),
-               "jobs": "läuft" if running else d.job_problems_since(
-                   (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(timespec="seconds"))}
+               "jobs": "läuft" if running else d.job_problems_since(max(  # Fehler seit dem letzten Blick, max. 24 h
+                   (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(timespec="seconds"),
+                   d.get_setting("jobs_seen_at", "") or ""))}
         # Andere Kanäle mit wartenden Videos: Hinweis im Kanal-Umschalter, damit nichts liegen bleibt
         others = {k: waiting_count(d, k) for k in channels if k != channel.key} if len(channels) > 1 else {}
         return TEMPLATES.TemplateResponse(request, name, {"channel": channel, "channels": channels,
@@ -391,7 +392,9 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
     # ------------------------------------------------------------------ Jobs
     @app.get("/jobs")
     def jobs(request: Request, filter: str = "", seite: int = 1):
-        rows, total = db().jobs_page(filter, max(seite, 1), JOBS_PER_PAGE)
+        d = db()
+        d.set_setting("jobs_seen_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))  # Badge quittiert
+        rows, total = d.jobs_page(filter, max(seite, 1), JOBS_PER_PAGE)
         pages = max(1, -(-total // JOBS_PER_PAGE))
         return page(request, "jobs.html", jobs=rows, total=total, flt=filter, seite=max(seite, 1), pages=pages)
 

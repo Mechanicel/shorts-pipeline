@@ -331,3 +331,18 @@ def test_neu_erzeugen_mit_stil_im_web(env) -> None:
     client.post(f"/topics/{tid}/regenerate", data={"style": "v2"})
     t = Database(settings.db_path).get(tid)
     assert t.status == Status.NEU and t.style_pick == "v2"
+
+
+def test_jobs_badge_verschwindet_nach_besuch(env) -> None:
+    settings, client = env
+    _setup(client)
+    db = Database(settings.db_path)
+    jid = db.start_job("pipeline", ["pipeline"], "web", "")
+    db.finish_job(jid, 1, "error", "kaputt")
+    assert 'class="count bad"' in client.get("/").text
+    client.get("/jobs")
+    assert 'class="count bad"' not in client.get("/").text
+    time.sleep(1.1)  # Zeitstempel sekundengenau
+    jid = db.start_job("upload", ["upload"], "web", "")
+    db.finish_job(jid, 1, "error", "wieder kaputt")
+    assert 'class="count bad"' in client.get("/").text  # neuer Fehler → Badge wieder da

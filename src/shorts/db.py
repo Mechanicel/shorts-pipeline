@@ -358,7 +358,8 @@ class Database:
         return [dict(r) for r in rows], total
 
     def job_problems_since(self, iso: str) -> int:
-        return self._conn.execute(f"SELECT COUNT(*) FROM job_runs WHERE started_at >= ? AND "
+        """Fehlgeschlagene Jobs, die NACH iso geendet haben (Badge in der Navigation)."""
+        return self._conn.execute(f"SELECT COUNT(*) FROM job_runs WHERE finished_at > ? AND "
                                   f"{self.JOB_FILTERS['fehler']}", (iso,)).fetchone()[0]
 
     def log_visibility(self, topic_id: int, visibility: str, checked_at: str) -> bool:

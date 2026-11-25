@@ -31,7 +31,7 @@ Sperre nach 5 Fehlversuchen. Passwort vergessen: `docker compose run --rm job we
 | **Videos** | Geplant · Öffentlich · Abgelehnt/Verworfen · Gelöscht, Klick auf eine Zeile zeigt alle Details und Links |
 | **Statistik** | Stil-Vergleich v1/v2/v3, Diagramm „angesehen vs. weggewischt“, Werte aus YouTube Studio gesammelt eintragen |
 | **Recherche** | Ausreißer-Recherche starten, Treffer ansehen und die ersten 3 Sekunden sichten |
-| **Jobs** | Protokoll aller Läufe mit Filter und Logs |
+| **Jobs** | Protokoll aller Läufe mit Filter und Logs; das rote Badge zählt neue Fehler und verschwindet beim Öffnen |
 | **Einstellungen** | Zeitplan für Erstellen und Upload, Veröffentlichungstermine, Passwort |
 
 **Mehrere Kanäle:** Gibt es in `config/channels.yaml` mehr als einen Kanal, wird der Kanalname oben links zum
