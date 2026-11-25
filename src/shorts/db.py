@@ -260,6 +260,13 @@ class Database:
             "AND COALESCE(yt_visibility,'') != 'gelöscht'", (channel,))
         return {r[0] for r in rows}
 
+    def planned_publish_times(self, channel: str) -> list[str]:
+        """Termine hochgeladener, nicht gelöschter Videos (für die Vorrats-Prüfung)."""
+        rows = self._conn.execute(
+            "SELECT publish_at FROM topics WHERE channel=? AND status=? AND publish_at IS NOT NULL "
+            "AND COALESCE(yt_visibility,'') != 'gelöscht'", (channel, Status.HOCHGELADEN))
+        return [r[0] for r in rows]
+
     def counts(self, channel: str | None = None) -> dict[str, int]:
         sql = "SELECT status, COUNT(*) FROM topics"
         args: tuple[Any, ...] = ()

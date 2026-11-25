@@ -48,13 +48,15 @@
     <div style="flex:1;min-width:200px">
       <b>#{{ t.id }} {{ s.get("title", t.title) }}</b>
       <div class="muted">Quelle {{ source_date_label(t.published_at) }}</div>
+      {% if slot_hints[t.id].warning %}<p class="warn">⏰ {{ slot_hints[t.id].warning }}</p>{% endif %}
       <form method="post" action="/actions/upload-one" class="row" style="margin-top:6px">
         <input type="hidden" name="topic_id" value="{{ t.id }}">
         <label for="slot{{ t.id }}" class="sr-only">Termin</label>
+        {% set hint = slot_hints[t.id] %}
         <select name="slot" id="slot{{ t.id }}">
-          <option value="next">nächster freier Termin{% if free_slots %} ({{ free_slots[0] | local_time }}){% endif %}</option>
-          {% for slot in free_slots[1:] %}<option value="{{ slot }}">{{ slot | local_time }}</option>{% endfor %}
-          <option value="sofort">sofort öffentlich</option>
+          <option value="next" {% if hint.slot %}selected{% endif %}>nächster passender Termin{% if hint.slot %} ({{ hint.slot | local_time }}){% endif %}</option>
+          {% for slot in free_slots %}{% if slot != hint.slot %}<option value="{{ slot }}">{{ slot | local_time }}</option>{% endif %}{% endfor %}
+          <option value="sofort" {% if not hint.slot %}selected{% endif %}>sofort öffentlich</option>
         </select>
         <button class="primary" {% if running %}disabled{% endif %}>Hochladen</button>
       </form>

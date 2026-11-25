@@ -1,7 +1,7 @@
 """YouTube-Upload freigegebener Videos: privat + publishAt auf die Wochen-Slots verteilt (oder --sofort öffentlich).
 
-Quota: videos.insert kostet ca. 1.600 Einheiten, Tageskontingent 10.000; Reset um Mitternacht
-Pacific Time. Verbrauch wird in SQLite mitgezählt.
+Kontingent: videos.insert hat einen eigenen Topf (100/Tag, Reset Mitternacht Pacific Time); maßgeblich sind
+Googles Fehlermeldungen. Fristen: Videos mit Frist/Stichtag erscheinen mindestens 3 Tage vorher (deadline.py).
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from .config import ChannelConfig, Settings
+from .deadline import choose_slot, deadline_of
 from .db import Database, Status, Topic
 from .notify import notify
 from .result import ERROR, OK, WARN, plural, report
@@ -279,7 +280,7 @@ def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry
              len(pending), db.uploads_on(day), settings.yt_uploads_per_day)
     taken = db.taken_publish_slots(channel.key)
     youtube = None if dry_run else youtube_client(channel)
-    done, errors, stopped = [], [], None
+    done, errors, stopped, deadline_skips = [], [], None, []
     for topic in pending:
         slot = topic.publish_at
         if immediate:
@@ -287,7 +288,14 @@ def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry
         elif publish_at:
             slot, publish_at = publish_at, None  # Wunschtermin nur für das erste Video
         elif not slot or datetime.fromisoformat(slot.replace("Z", "+00:00")) < now + MIN_LEAD:
-            slot = next_free_slot(channel.publish_slots, taken, now)
+            choice = choose_slot(upcoming_free_slots(channel.publish_slots, taken, now, 40),
+                                 deadline_of(topic.script, now.date()), now)
+            if choice.warning:
+                log.warning("#%s: %s", topic.id, choice.warning)
+            if choice.slot is None:  # Frist: kein Termin früh genug → nicht stillschweigend zu spät planen
+                deadline_skips.append(f"#{topic.id}: {choice.warning}")
+                continue
+            slot = choice.slot
         body = build_metadata(topic, channel, slot)
         if dry_run:
             if slot:
@@ -318,6 +326,9 @@ def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry
         report(OK, f"Dry-Run: {plural(len(pending), 'Video', 'Videos')} würden hochgeladen.")
         return 0
 
+    if deadline_skips:
+        notify(settings, f"⏰ Upload [{channel.key}] – Frist zu knapp, nicht eingeplant:\n" + "\n".join(deadline_skips)
+               + "\nIm Webinterface „sofort öffentlich“ wählen oder Freigabe zurücknehmen.")
     n, total = len(done), len(pending)
     reasons = []
     reset_txt = f"{quota_reset(now):%H:%M}"
@@ -325,6 +336,8 @@ def run_uploads(settings: Settings, db: Database, channel: ChannelConfig, *, dry
         reasons.append(f"Google meldet {stopped.reason}, Reset {reset_txt}")
     if errors:
         reasons.append(plural(len(errors), "Fehler", "Fehler"))
+    if deadline_skips:
+        reasons.append(f"{len(deadline_skips)} wegen Frist nicht eingeplant (sofort veröffentlichen?)")
     summary = f"{n} von {plural(total, 'Video', 'Videos')} hochgeladen" + (f" – {'; '.join(reasons)}" if reasons else "")
     status = OK if n == total else (ERROR if n == 0 and errors and not stopped else WARN)
 

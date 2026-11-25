@@ -18,6 +18,7 @@ from fastapi.templating import Jinja2Templates
 from .. import actions
 from ..config import Settings, get_channel, load_settings
 from ..costs import format_cost
+from ..deadline import choose_slot, deadline_of
 from ..db import Database, Status
 from ..script import word_count
 from ..review_bot import source_date_label
@@ -78,6 +79,8 @@ def warning_badges(topic, today=None) -> list[str]:
     """Auffällige Hinweise oben auf der Freigabe-Karte (Faktencheck-Hilfe)."""
     from datetime import date
     badges = []
+    if dl := deadline_of(topic.script, today or date.today()):
+        badges.append(f"{dl.kind} {dl.day:%d.%m.%Y} – spätestens {dl.latest_publish_day:%d.%m.} veröffentlichen")
     if topic.note:
         if "Zitate" in topic.note:
             badges.append("Zitat nicht wörtlich belegt")
@@ -226,6 +229,9 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         uploaded = d.recent_topics([Status.HOCHGELADEN, Status.PAKET], 15)
         uploads = upload_status(s, d, now)
         free_slots = upcoming_free_slots(sched["publish_slots"], d.taken_publish_slots(channel.key), now, 6)
+        approved = d.by_status(Status.FREIGEGEBEN, channel.key)
+        many_free = upcoming_free_slots(sched["publish_slots"], d.taken_publish_slots(channel.key), now, 40)
+        slot_hints = {t.id: choose_slot(many_free, deadline_of(t.script, now.date()), now) for t in approved}
         videos_30 = [t for t in d.recent_topics([Status.VIDEO, Status.WARTET, Status.FREIGEGEBEN, Status.PAKET,
                                                   Status.HOCHGELADEN], 200)
                      if t.cost_json and t.updated_at >= (now - timedelta(days=30)).isoformat()]
@@ -237,7 +243,7 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
             request, "dashboard.html", msg=msg, err=err,
             waiting=d.by_status(Status.VIDEO, channel.key) + d.by_status(Status.WARTET, channel.key),
             free_slots=free_slots, avg_video=avg_video,
-            approved=d.by_status(Status.FREIGEGEBEN, channel.key),
+            approved=approved, slot_hints=slot_hints,
             uploaded=uploaded, uploads=uploads, api_public=api_public, source_date_label=source_date_label,
             failed=d.by_status(Status.FEHLER, channel.key),
             in_work=d.by_status(Status.SKRIPT, channel.key),

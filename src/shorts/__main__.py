@@ -164,9 +164,19 @@ def cmd_auth_check(args, settings) -> int:
 
 
 def cmd_check_public(args, settings) -> int:
+    from .deadline import planned_stock, stock_warning, utc_now
     from .publiccheck import run_check
 
-    return run_check(_db(settings, False), args.channel, args.id)
+    db = _db(settings, False)
+    rc = run_check(db, args.channel, args.id)
+    # Vorrats-Prüfung (läuft täglich mit der Sichtbarkeitsprüfung): < 3 Tage geplant → Telegram
+    stock = planned_stock(db.planned_publish_times(args.channel), utc_now())
+    if warning := stock_warning(stock):
+        log.warning(warning)
+        notify(settings, f"[{args.channel}] {warning}")
+    else:
+        log.info("Vorrat: %d Videos an %d Tagen geplant", stock.videos, stock.days)
+    return rc
 
 
 def cmd_research(args, settings) -> int:
