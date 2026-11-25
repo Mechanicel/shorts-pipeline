@@ -172,4 +172,7 @@ Cluster + 10 Ideen. Manuelle Sichtung der ersten 3 s im Web; ab 15 Sichtungen �
 - Englischer Kanal, Piper als günstige TTS, eigene Hintergrundclips.
 
 **Lehren:** Ein abgebrochener `docker compose run` läuft im Hintergrund weiter → `flock` auf `data/job.lock`.
+Nach Änderungen an `db.py`/Code, den `bot` und `web` dauerhaft geladen haben: beide neu starten
+(`docker compose restart bot web`) – aber nur, wenn kein Job läuft (Web-Neustart beendet laufende Jobs; verwaiste
+Einträge markiert der JobRunner beim Start als abgebrochen). `Topic.from_row` ignoriert unbekannte Spalten.
 Vor Aussagen über YouTube-Sichtbarkeit immer von außen prüfen (gelöscht ≠ gesperrt ≠ privat).

@@ -146,3 +146,25 @@ def test_hook_regeln() -> None:
                     "Zum 1. März sparst du Geld.", "Januar bringt dir mehr Geld."):
         assert any("Datums" in p for p in hook_problems(opening + " Rest.")), opening
     assert hook_problems("Abgeltungssteuer: Du sparst bald Geld. Rest.") == []  # 'Ab...' im Wort ist ok
+
+
+def test_topic_ignoriert_unbekannte_spalten(tmp_path) -> None:
+    """Älterer Code (laufender Bot) darf an einer neueren DB mit zusätzlicher Spalte nicht abstürzen."""
+    from shorts.db import Database
+    db = Database(tmp_path / "x.sqlite3")
+    tid = db.add_topic("de", "https://a.de/x", "Q", "X")
+    db._conn.execute("ALTER TABLE topics ADD COLUMN spalte_aus_der_zukunft TEXT")
+    assert db.get(tid).title == "X"
+
+
+def test_verwaiste_jobs_werden_beim_start_abgebrochen(tmp_path) -> None:
+    from dataclasses import replace
+    from shorts.config import Settings
+    from shorts.db import Database
+    from shorts.web.jobs import JobRunner
+    settings = replace(Settings(), data_dir=tmp_path)
+    db = Database(settings.db_path)
+    jid = db.start_job("pipeline", ["pipeline"], "web", str(tmp_path / "x.log"))
+    JobRunner(settings, lambda: Database(settings.db_path))
+    job = db.get_job(jid)
+    assert job["finished_at"] and job["result_status"] == "error" and "neu gestartet" in job["result_summary"]

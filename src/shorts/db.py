@@ -10,7 +10,7 @@ import json
 import logging
 import sqlite3
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
@@ -154,9 +154,9 @@ class Topic:
     yt_views_72h: str | None
     video_seconds: str | None
     yt_deleted_at: str | None
-    style_pick: str | None  # von Hand gewählter Stil (v2/v3); None = automatisch nach STYLE_MODE
     created_at: str
     updated_at: str
+    style_pick: str | None = None  # von Hand gewählter Stil (v2/v3); None = automatisch nach STYLE_MODE
 
     @property
     def script(self) -> dict[str, Any] | None:
@@ -166,8 +166,10 @@ class Topic:
     def from_row(cls, row: sqlite3.Row) -> "Topic":
         d = dict(row)
         d["status"] = Status(d["status"])
-        d.setdefault("style_pick", None)
-        return cls(**d)
+        # Unbekannte Spalten ignorieren: Ein Dienst mit älterem Code (bot/web) darf nicht abstürzen, wenn ein
+        # neuerer Prozess schon eine Spalte ergänzt hat (so am 25.11. passiert: Bot-Fehler „yt_deleted_at“).
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in d.items() if k in known})
 
 
 class Database:
@@ -325,6 +327,14 @@ class Database:
             "INSERT INTO job_runs(kind,args,trigger,started_at,log_path) VALUES(?,?,?,?,?)",
             (kind, json.dumps(args), trigger, _now(), log_path))
         return int(cur.lastrowid)
+
+    def abort_orphan_jobs(self) -> int:
+        """Jobs ohne Ende (Web-Dienst während des Laufs neu gestartet → Prozess beendet) als abgebrochen markieren."""
+        cur = self._conn.execute(
+            "UPDATE job_runs SET finished_at=?, returncode=-1, result_status='error', "
+            "result_summary='Abgebrochen: Web-Dienst wurde während des Laufs neu gestartet' WHERE finished_at IS NULL",
+            (_now(),))
+        return cur.rowcount
 
     def finish_job(self, job_id: int, returncode: int, result_status: str | None = None,
                    result_summary: str | None = None) -> None:

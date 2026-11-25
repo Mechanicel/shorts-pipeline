@@ -24,6 +24,9 @@ class JobRunner:
         self._lock = threading.Lock()
         self._current: dict | None = None
         self.log_dir = settings.data_dir / "logs"
+        # Beim Start läuft noch kein Job: alles ohne Ende stammt von einem abgebrochenen Vorgänger-Prozess
+        if n := db_factory().abort_orphan_jobs():
+            log.warning("%s verwaiste Jobs als abgebrochen markiert", n)
 
     def running(self) -> dict | None:
         with self._lock:
