@@ -94,10 +94,10 @@ def fetch_stats(db: Database, channel: str, query: Callable[..., dict], today: d
             continue
         resp = query(ids="channel==MINE", startDate=p.isoformat(), endDate=(p + timedelta(days=2)).isoformat(),
                      metrics="views", dimensions="day", filters=f"video=={t.youtube_id}")
+        # Tage ohne Aufrufe fehlen in der Antwort → nach 4 Tagen Wartezeit gilt die Summe als vollständig
         days = resp.get("rows", [])
-        if len(days) >= 3:
-            db.update_fields(t.id, yt_views_72h=str(sum(int(r[1]) for r in days)))
-            h72 += 1
+        db.update_fields(t.id, yt_views_72h=str(sum(int(r[1]) for r in days)))
+        h72 += 1
     return {"videos": len(topics), "rows": rows, "h72": h72}
 
 

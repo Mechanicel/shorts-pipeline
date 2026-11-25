@@ -152,7 +152,11 @@ def cmd_auth_check(args, settings) -> int:
     if not path.exists():
         print(f"{path} fehlt – auth_youtube.py auf dem Laptop ausführen und per scp kopieren.")
         return 1
-    creds = Credentials.from_authorized_user_file(str(path), SCOPES)
+    # Scopes aus der Datei übernehmen – sonst würde das Zurückschreiben das Analytics-Recht aus der Datei streichen
+    creds = Credentials.from_authorized_user_file(str(path))
+    if SCOPES[0] not in (creds.scopes or []):
+        print("Token ohne Upload-Recht – auth_youtube.py erneut ausführen.")
+        return 1
     if not creds.refresh_token:
         print("Token ohne refresh_token – auth_youtube.py erneut ausführen.")
         return 1
