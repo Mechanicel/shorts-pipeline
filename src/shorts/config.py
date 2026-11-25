@@ -63,6 +63,7 @@ class Settings:
     openai_tts_voice: str = field(default_factory=lambda: _env("OPENAI_TTS_VOICE", "nova") or "nova")
     tts_speed: float = field(default_factory=lambda: float(_env("TTS_SPEED", "1.25") or 1.25))
     pixabay_api_key: str | None = field(default_factory=lambda: _env("PIXABAY_API_KEY"))
+    yt_api_key: str | None = field(default_factory=lambda: _env("YT_API_KEY"))  # nur Recherche (Data API, öffentlich)
     subtitle_timing: str = field(default_factory=lambda: _env("SUBTITLE_TIMING", "whisper") or "whisper")
     telegram_bot_token: str | None = field(default_factory=lambda: _env("TELEGRAM_BOT_TOKEN"))
     telegram_chat_id: str | None = field(default_factory=lambda: _env("TELEGRAM_CHAT_ID"))

@@ -1,0 +1,60 @@
+{% extends "base.html" %}{% block title %}Recherche{% endblock %}
+{% block content %}
+<h1>Ausreißer-Recherche</h1>
+<div class="card">
+  <p class="muted">Shorts kleiner deutscher Kanäle (≤ 30.000 Abos), die mindestens 5× so oft laufen wie der Median
+    ihrer letzten 20 Uploads. Daten nur über die offizielle YouTube Data API.
+    {% if last_run %}Letzter Lauf: {{ last_run.started_at | local_time }} · {{ last_run.outliers or 0 }} Ausreißer ·
+    {{ last_run.search_calls or 0 }} search-Aufrufe{% if last_run.quota_stop %} · ⚠️ {{ last_run.quota_stop }}{% endif %}{% endif %}</p>
+  {% if not has_key %}<p class="warn">YT_API_KEY fehlt in .env – ohne API-Schlüssel kann die Recherche nicht laufen.</p>{% endif %}
+  <form method="post" action="/actions/research" class="row">
+    <label for="terms">Suchbegriffe</label>
+    <select name="terms" id="terms">{% for n in (5, 10, 18, 40) %}<option value="{{ n }}" {% if n == 10 %}selected{% endif %}>{{ n }}{% if n == 40 %} (max.){% endif %}</option>{% endfor %}</select>
+    <button class="primary" {% if running or not has_key %}disabled{% endif %}>Recherche starten</button>
+  </form>
+  <p class="muted">Ein search-Aufruf je Suchbegriff (Topf: 100/Tag). Bericht landet in <code>docs/research/</code>.</p>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">Manuelle Sichtung ({{ reviewed }} / {{ min_reviews }})</h2>
+  <p class="muted">Pro Video die ersten 3 Sekunden ansehen und das Formular ausfüllen – das kann die API nicht.</p>
+  <form method="post" action="/actions/research-patterns">
+    <button class="primary" {% if running or reviewed < min_reviews %}disabled{% endif %}>Muster auswerten</button>
+    {% if reviewed < min_reviews %}<span class="muted">ab {{ min_reviews }} gesichteten Videos</span>{% endif %}
+  </form>
+  {% if analysis %}<details open><summary>Letzte Auswertung ({{ analysis.date }}, {{ analysis.n }} Videos)</summary>
+    <div style="white-space:pre-wrap">{{ analysis.text }}</div></details>{% endif %}
+</div>
+
+<h2>Ausreißer ({{ rows|length }})</h2>
+{% macro sortlink(key, label) %}<a href="/research?sort={{ key }}">{{ label }}{% if sort == key %} ▾{% endif %}</a>{% endmacro %}
+<div class="card table-wrap"><table>
+  <thead><tr><th>{{ sortlink("score", "Score") }}</th><th>Titel</th><th>{{ sortlink("channel_title", "Kanal") }}</th>
+    <th>{{ sortlink("subs", "Abos") }}</th><th>{{ sortlink("views", "Aufrufe") }}</th><th>{{ sortlink("views_per_day", "pro Tag") }}</th>
+    <th>{{ sortlink("duration_s", "Länge") }}</th><th>{{ sortlink("published_at", "Veröffentlicht") }}</th><th>Sichtung</th></tr></thead>
+  <tbody>
+  {% for r in rows %}<tr id="r{{ r.video_id }}">
+    <td data-label="Score"><b>{{ "%.1f"|format(r.score or 0) | replace(".", ",") }}×</b></td>
+    <td data-label="Titel"><a href="{{ short_url(r.video_id) }}" target="_blank" rel="noopener">{{ r.title }}</a>
+      <br><span class="muted">Suchbegriff: {{ r.search_term }}{% if r.n_snapshots > 1 %} · seit Fund +{{ "{:,}".format(r.views - r.first_views).replace(",", ".") }} Aufrufe ({{ r.n_snapshots }} Abrufe){% endif %}</span></td>
+    <td data-label="Kanal">{{ r.channel_title }}<br><span class="muted">Median {{ "{:,}".format((r.channel_median or 0)|int).replace(",", ".") }}</span></td>
+    <td data-label="Abos">{% if r.subs_hidden %}<span class="pill">versteckt</span>{% else %}{{ "{:,}".format(r.subs or 0).replace(",", ".") }}{% endif %}</td>
+    <td data-label="Aufrufe">{{ "{:,}".format(r.views).replace(",", ".") }}</td>
+    <td data-label="pro Tag">{{ "{:,}".format((r.views_per_day or 0)|int).replace(",", ".") }}</td>
+    <td data-label="Länge">{{ r.duration_s }} s</td>
+    <td data-label="Veröffentlicht">{{ r.published_at | local_time }}</td>
+    <td data-label="Sichtung">
+      <details {% if not r.reviewed_at %}{% endif %}><summary>{% if r.reviewed_at %}✅ gesichtet{% else %}ausfüllen{% endif %}</summary>
+        <form method="post" action="/research/{{ r.video_id }}/review" class="stack">
+          {% for key, label in [("face", "Gesicht"), ("voice", "Stimme"), ("first_frame", "Bild in Sekunde 1"), ("hook_type", "Hook-Typ"), ("music", "Musik")] %}
+          <label>{{ label }} <select name="{{ key }}"><option value="">–</option>
+            {% for opt in fields[key] %}<option {% if r[key] == opt %}selected{% endif %}>{{ opt }}</option>{% endfor %}</select></label>
+          {% endfor %}
+          <label>Notiz <input name="notes" maxlength="1000" value="{{ r.notes or '' }}"></label>
+          <button class="ghost small">Speichern</button>
+        </form></details></td>
+  </tr>
+  {% else %}<tr><td colspan="9" class="muted">Noch keine Ausreißer – Recherche starten.</td></tr>{% endfor %}
+  </tbody>
+</table></div>
+{% endblock %}

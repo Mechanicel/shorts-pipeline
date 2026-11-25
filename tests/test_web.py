@@ -245,3 +245,24 @@ def test_einstellungen_warnt_bei_ungleichgewicht(env) -> None:
                                        "slot_day_0": "mon", "slot_time_0": "17:00"}, follow_redirects=True)
     assert "10 Videos pro Woche" in r.text and "nur 1 Termin –" in r.text
     assert "Nächste freie Termine" in r.text
+
+
+# ------------------------------------------------------------------ Recherche-Seite
+def test_recherche_seite_und_sichtung(env) -> None:
+    from shorts.research import ResearchStore, YouTubeAPI, run_research
+    from tests.test_research import CFG, NOW, FakeYouTube
+
+    settings, client = env
+    _setup(client)
+    store = ResearchStore(Database(settings.db_path))
+    run_research(YouTubeAPI("k", get=FakeYouTube()), store, CFG, now=NOW)
+    r = client.get("/research?sort=views")
+    assert r.status_code == 200
+    assert "Achtung: Rente steigt um 50 €" in r.text and "https://www.youtube.com/shorts/v1" in r.text
+    assert "versteckt" in r.text and "Muster auswerten" in r.text and "(0 / 15)" in r.text
+    r = client.post("/research/v1/review", data={"face": "nein", "voice": "KI", "first_frame": "Text-Tafel",
+                                                 "hook_type": "Zahl", "music": "nein", "notes": "x"},
+                    follow_redirects=False)
+    assert r.status_code == 303
+    assert store.review_count() == 1 and "(1 / 15)" in client.get("/research").text
+    assert client.post("/research/..%2Fetc/review", data={}).status_code == 404

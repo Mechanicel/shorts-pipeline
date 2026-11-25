@@ -74,6 +74,22 @@ Prüfen, ob die Videos für Zuschauer sichtbar sind (ohne Anmeldung): `docker co
 Jeweils als `docker compose run --rm job <befehl> [--channel de]`.
 Tests: `docker compose run --rm --entrypoint python job -m pytest -q`.
 
+## Ausreißer-Recherche
+
+Findet Shorts kleiner deutscher Kanäle (≤ 30.000 Abos) zu Geld-, Rechts- und Alltagsthemen, die mindestens 5× so
+oft laufen wie der Median der letzten 20 Uploads ihres Kanals – als Ideenquelle für Themen, Titel und Länge.
+
+- Nur die offizielle YouTube Data API v3 mit eigenem API-Schlüssel (`YT_API_KEY` in `.env`), kein Download fremder
+  Videos, kein Scraping. Ein search-Aufruf je Suchbegriff (eigener Topf: 100/Tag), max. 40 pro Lauf.
+- `docker compose run --rm job research --terms 10` oder im Webinterface unter **Recherche**.
+- Suchbegriffe, Filter, Blockliste großer Medienmarken: `config/research.yaml`.
+- Ergebnis: Tabellen `research_videos`/`research_snapshots` (jeder Lauf ein Snapshot → Wachstum über Tage),
+  Bericht `docs/research/outliers-JJJJ-MM-TT.md` + CSV, Kurzfassung in Telegram.
+- Titelmuster, Längen und wiederkehrende Kanäle zählt der Code exakt; Claude Sonnet 5.5 bildet Themen-Cluster und
+  schlägt 10 Themen vor, die aus unseren offiziellen Quellen belegbar wären.
+- Was die API nicht sieht (Gesicht, Stimme, Bild in Sekunde 1, Hook-Typ, Musik), trägst du auf der Seite
+  **Recherche** pro Video ein; ab 15 gesichteten Videos vergleicht „Muster auswerten“ sie mit unserem Format.
+
 ## Setup (einmalig)
 
 1. **Host:** `sudo bash deploy/setup_host.sh` – Docker + Compose aus dem offiziellen Repo, Gruppe `docker`,

@@ -1,0 +1,78 @@
+# Ausreißer-Recherche (CLI: research). Nur offizielle YouTube Data API v3 mit YT_API_KEY aus .env.
+# Kontingent: search.list hat einen eigenen Topf von 100 Aufrufen/Tag; videos/channels/playlistItems
+# kosten je 1 Einheit aus dem 10.000er-Topf.
+
+search_terms:
+  - Rente
+  - Rentenerhöhung
+  - Steuer
+  - Steuererklärung
+  - Krankenkasse
+  - Bürgergeld
+  - Kindergeld
+  - Strompreis
+  - Mindestlohn
+  - Deutschlandticket
+  - Wohngeld
+  - Pflegegeld
+  - "ab Januar"
+  - "ab 2027"
+  - "neues Gesetz"
+  - Verbraucherzentrale
+  - "Geld zurück"
+  - Frist
+
+max_search_calls: 40          # search.list-Aufrufe pro Lauf (ein Aufruf je Suchbegriff)
+published_within_days: 30     # publishedAfter = heute − N Tage
+short_max_seconds: 180        # als Short zählen Videos bis zu dieser Länge
+
+filters:
+  max_subscribers: 30000      # versteckte Abozahl → trotzdem aufnehmen, markiert
+  min_views: 20000
+  max_age_days: 30
+  min_outlier_score: 5        # Aufrufe / Median der letzten Uploads des Kanals
+
+channel_median_uploads: 20    # so viele letzte Uploads bilden den Kanal-Median
+min_channel_videos: 3         # weniger Uploads → kein belastbarer Median, Video wird übersprungen
+channel_cache_days: 7
+
+analysis:
+  top_n: 40
+  model: claude-sonnet-5-5
+  effort: medium
+
+# Eigener Kanal: Kanal-IDs hier eintragen; zusätzlich wird der Kanalname aus channels.yaml ausgeschlossen.
+own_channel_ids: []
+
+# Große Medienmarken (Teilstring im Kanalnamen, Groß/Klein egal) – keine „kleinen Kanäle“.
+blocked_channels:
+  - tagesschau
+  - ZDF
+  - ARD
+  - WDR
+  - NDR
+  - SWR
+  - BR24
+  - MDR
+  - RBB
+  - hessenschau
+  - Bild
+  - WELT
+  - SPIEGEL
+  - stern
+  - FOCUS
+  - n-tv
+  - ntv
+  - RTL
+  - Sat.1
+  - ProSieben
+  - Finanztip
+  - Stiftung Warentest
+  - Handelsblatt
+  - Merkur
+  - t-online
+  - Deutschlandfunk
+  - FAZ
+  - Süddeutsche
+  - CHIP
+  - COMPUTER BILD

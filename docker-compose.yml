@@ -15,6 +15,7 @@ x-common: &common
     - ./src:/app/src:ro          # Code-Änderungen ohne Rebuild
     - ./tests:/app/tests:ro
     - ./pytest.ini:/app/pytest.ini:ro
+    - ./docs:/app/docs           # Recherche-Berichte (docs/research/)
 
 services:
   # Dauerhaft: Telegram-Review-Bot (verschickt neue Videos, nimmt Freigaben entgegen)

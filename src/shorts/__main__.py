@@ -169,6 +169,72 @@ def cmd_check_public(args, settings) -> int:
     return run_check(_db(settings, False), args.channel, args.id)
 
 
+def cmd_research(args, settings) -> int:
+    from datetime import date
+
+    from .research import (MIN_REVIEWS_FOR_ANALYSIS, OUR_FORMAT, ResearchAnalyst, ResearchStore, YouTubeAPI,
+                           load_research_config, pattern_stats, render_report, run_research, telegram_summary,
+                           write_csv)
+    from .result import ERROR, OK, WARN, report
+
+    cfg = load_research_config()
+    store = ResearchStore(_db(settings, False))
+    out_dir = settings.root / "docs" / "research"
+    today = date.today().isoformat()
+
+    if args.analyze_reviews:  # manuelle Sichtung → Muster (Knopf im Webinterface)
+        reviews = store.reviewed()
+        if len(reviews) < MIN_REVIEWS_FOR_ANALYSIS:
+            report(WARN, f"Erst {len(reviews)} von {MIN_REVIEWS_FOR_ANALYSIS} Videos gesichtet.")
+            return 0
+        analyst = ResearchAnalyst(settings, cfg)
+        text = analyst.compare_reviews(reviews, OUR_FORMAT)
+        cost = sum(x or 0 for x in analyst.spent)
+        path = out_dir / f"review-patterns-{today}.md"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# Muster aus der manuellen Sichtung {today}\n\n{len(reviews)} gesichtete Ausreißer.\n\n"
+                        f"{text}\n", encoding="utf-8")
+        _db(settings, False).set_setting("research_review_analysis",
+                                         {"date": today, "n": len(reviews), "text": text, "path": str(path)})
+        print(text)
+        report(OK, f"Muster aus {len(reviews)} gesichteten Videos ausgewertet ({cost * settings.eur_per_usd:.2f} €)"
+               .replace(".", ",", 1))
+        return 0
+
+    if not settings.yt_api_key:
+        report(ERROR, "YT_API_KEY fehlt in .env (API-Schlüssel für die YouTube Data API v3).")
+        return 1
+    terms = args.term or cfg.search_terms[: args.terms or None]
+    run_id = store.start_run(len(terms))
+    result = run_research(YouTubeAPI(settings.yt_api_key), store, cfg, terms)
+    top = [v for v in store.outliers() if v["video_id"] in {c.video_id for c in result.outliers}][: cfg.top_n]
+    stats = pattern_stats(top)
+    analysis, cost = None, 0.0
+    if top and not args.no_analysis and settings.anthropic_api_key:
+        analyst = ResearchAnalyst(settings, cfg)
+        try:
+            ch = get_channel(args.channel)
+            analysis = analyst.analyse(top, stats, ch.name, [src.name for src in ch.sources])
+        except Exception as exc:  # Auswertung ist Zugabe – Daten und Bericht gibt es trotzdem
+            log.warning("Claude-Auswertung fehlgeschlagen: %s", type(exc).__name__)
+        cost = sum(x or 0 for x in analyst.spent)
+    path = out_dir / f"outliers-{today}.md"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_report(result, top, stats, analysis, cost, settings.eur_per_usd, today), encoding="utf-8")
+    write_csv(top, path.with_suffix(".csv"))
+    store.finish_run(run_id, search_calls=result.search_calls, units=result.units, candidates=result.candidates,
+                     outliers=len(result.outliers), quota_stop=result.quota_stop, report_path=str(path))
+    notify(settings, telegram_summary(result, top, path))
+    print(path.read_text(encoding="utf-8"))
+    summary = (f"{len(result.outliers)} Ausreißer aus {result.candidates} Kandidaten, "
+               f"{result.search_calls} search-Aufrufe")
+    if result.quota_stop:
+        report(WARN, f"{summary} – abgebrochen: YouTube meldet {result.quota_stop}")
+    else:
+        report(OK if result.outliers else WARN, summary)
+    return 0
+
+
 def cmd_web(args, settings) -> int:
     from .web.app import run_web
 
@@ -248,6 +314,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="alle Videos dieses Laufs sofort öffentlich hochladen (ohne Termin)")
     sp = add("check-public", cmd_check_public, "prüft von außen, ob hochgeladene Videos öffentlich sind")
     sp.add_argument("--id", action="append", default=[], help="zusätzliche YouTube-Video-ID")
+    sp = add("research", cmd_research, "Ausreißer-Recherche: erfolgreiche Shorts kleiner Kanäle (YouTube Data API)")
+    sp.add_argument("--terms", type=int, default=0, help="nur die ersten N Suchbegriffe aus research.yaml")
+    sp.add_argument("--term", action="append", default=[], help="eigener Suchbegriff (mehrfach möglich)")
+    sp.add_argument("--no-analysis", action="store_true", help="ohne Claude-Auswertung")
+    sp.add_argument("--analyze-reviews", action="store_true", help="manuell gesichtete Videos auswerten")
     add("bot", cmd_bot, "Telegram-Review-Bot (dauerhaft)", channel=False)
     sp = add("web", cmd_web, "Webinterface + Zeitplan (dauerhaft)", channel=False)
     sp.add_argument("--port", type=int, default=8080)

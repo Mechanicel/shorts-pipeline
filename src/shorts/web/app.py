@@ -50,6 +50,11 @@ def job_label(args_json: str) -> str:
         how = "sofort" if "--sofort" in a else ("Wunschtermin" if "--publish-at" in a else "nächste Termine")
         only = f" · #{a[a.index('--only') + 1]}" if "--only" in a else ""
         return f"Upload · {how}{only}"
+    if kind == "research":
+        if "--analyze-reviews" in a:
+            return "Recherche · Muster auswerten"
+        n = a[a.index("--terms") + 1] if "--terms" in a else "alle"
+        return f"Recherche ({n} Suchbegriffe)"
     return {"check-public": "Sichtbarkeit prüfen"}.get(kind, " ".join(a))
 
 
@@ -352,6 +357,41 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         return page(request, "settings.html", msg=msg, err=err, sched=sched, days=DAYS, day_labels=DAY_LABELS,
                     next_runs=scheduler.next_runs(), preview=preview, balance=balance, slot_rows=rows,
                     reset_time=f"{quota_reset(now):%H:%M}")
+
+    # ---------------------------------------------------------------- Ausreißer-Recherche
+    @app.get("/research")
+    def research_page(request: Request, sort: str = "score", msg: str = "", err: str = ""):
+        from ..research import MIN_REVIEWS_FOR_ANALYSIS, REVIEW_FIELDS, ResearchStore, short_url
+
+        d = db()
+        store = ResearchStore(d)
+        return page(request, "research.html", rows=store.outliers(order=sort), sort=sort, fields=REVIEW_FIELDS,
+                    reviewed=store.review_count(), min_reviews=MIN_REVIEWS_FOR_ANALYSIS, last_run=store.last_run(),
+                    analysis=d.get_setting("research_review_analysis"), short_url=short_url,
+                    has_key=bool(s.yt_api_key), msg=msg, err=err)
+
+    @app.post("/research/{video_id}/review")
+    async def research_review(video_id: str, request: Request):
+        from ..research import ResearchStore
+
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,20}", video_id):
+            raise HTTPException(404)
+        form = await request.form()
+        ResearchStore(db()).save_review(video_id, {k: str(v) for k, v in form.items()})
+        return back(msg="Sichtung gespeichert.", to="/research")
+
+    @app.post("/actions/research")
+    def research_run(terms: int = Form(10)):
+        terms = max(1, min(terms, 40))
+        if runner.launch("research", ["research", "--channel", channel.key, "--terms", str(terms)], "web") is None:
+            return back(err="Es läuft bereits ein Job – bitte warten, bis er fertig ist.", to="/research")
+        return back(msg=f"Recherche mit {terms} Suchbegriffen gestartet.", to="/research")
+
+    @app.post("/actions/research-patterns")
+    def research_patterns():
+        if runner.launch("research", ["research", "--channel", channel.key, "--analyze-reviews"], "web") is None:
+            return back(err="Es läuft bereits ein Job – bitte warten, bis er fertig ist.", to="/research")
+        return back(msg="Muster-Auswertung gestartet.", to="/research")
 
     @app.get("/settings")
     def settings_form(request: Request, msg: str = "", err: str = ""):

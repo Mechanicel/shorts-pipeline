@@ -1,7 +1,7 @@
 # CLAUDE.md – shorts-pipeline
 
 ## Ziel
-Automatisierte YouTube-Shorts für den Kanal **„Was ändert sich für dich?“**: 30–45 s Hochkant-Videos über
+Automatisierte YouTube-Shorts für den Kanal **„Was ändert sich für dich?“**: ca. 25 s Hochkant-Videos über
 neue Gesetze, Preise, Fristen und Geldthemen in Deutschland. Kein Gesicht, KI-Stimme, große Texteinblendungen.
 Aufwand des Betreibers: max. 2 h/Woche, nur Faktencheck + Freigabe per Telegram.
 Zunächst ein deutscher Kanal; Architektur ist pro Kanal/Sprache konfigurierbar (später englischer Kanal mit
@@ -28,10 +28,10 @@ eigenen Quellen → neuer Eintrag in `config/channels.yaml`, eigene `credentials
 | Modul | Aufgabe |
 |---|---|
 | `config.py` | `.env` → `Settings`, `config/channels.yaml` → `ChannelConfig` (Quellen, Stimme, Slots, Limits) |
-| `db.py` | SQLite (`data/pipeline.sqlite3`, WAL) + Status-Maschine mit erlaubten Übergängen, Quota-Tabelle |
+| `db.py` | SQLite (`data/pipeline.sqlite3`, WAL) + Status-Maschine mit erlaubten Übergängen, additive Migrationen, `app_settings`, `job_runs`, `upload_counts` |
 | `sources.py` | RSS (feedparser) + HTML-Linklisten (Regex), URL-Normalisierung, Artikeltext via trafilatura |
 | `triage.py` | Vorauswahl vor dem teuren Modell: Vorfilter per `title_blocklist` (kostenlos), dann Claude Haiku 5.5 (`ANTHROPIC_TRIAGE_MODEL`, ein Aufruf für bis zu `TRIAGE_MAX`=30 Themen, nur Titel+Anriss, im Zweifel durchlassen). Erkennt Dubletten zu Themen der letzten 30 Tage (`duplicate_of`) und vergibt Priorität 1–5 (`triage_score`, Opus-Reihenfolge). `similar_scripts()` = KI-freie Dubletten-Warnung auf fertigen Skripten. Nur `ok`-Themen gehen an Opus |
-| `script.py` | Claude (`messages.parse` + Pydantic `ShortScript`, Modell/Effort aus `.env`; kein Refusal-Fallback – Ablehnung = Thema verworfen). Validierung 70–110 Wörter, 1 Korrekturversuch. Belege (`evidence`) mit wörtlichen Zitaten → `unverified_quotes()` prüft gegen Quelltext |
+| `script.py` | Claude (`messages.parse` + Pydantic `ShortScript`, Modell/Effort aus `.env`; kein Refusal-Fallback – Ablehnung = Thema verworfen). Validierung 55–68 Wörter, Hook ≤ 8 Wörter, 2. Satz ohne Behörden-Einstieg (`hook_problems()`), 1 Korrekturversuch; bekommt die Themen der letzten 30 Tage (Dubletten). Belege (`evidence`) mit wörtlichen Zitaten → `unverified_quotes()` prüft gegen Quelltext |
 | `tts.py` | `TTSEngine`-Protocol; `OpenAITTS`, `EspeakTTS` (Dry-Run). Piper/ElevenLabs: neue Klasse + `get_tts()` |
 | `subtitles.py` | Wort-Timings (Standard: Whisper-Wortzeitstempel; `SUBTITLE_TIMING=estimate` als kostenlose Schätzung), Chunking, ASS-Datei (Titel, Untertitel mit gelbem aktivem Wort, Endkarte mit Quelle) |
 | `backgrounds.py` | Hintergrund: eigene Clips (`assets/backgrounds/`) → Pixabay-Pool (`data/backgrounds/pixabay/`) → generierte Ball-Physik-Animation (`data/backgrounds/generated/`, 6 Varianten, gecacht) → Farbverlauf. Liefert `BackgroundChoice(path, credit)` |
@@ -41,11 +41,12 @@ eigenen Quellen → neuer Eintrag in `config/channels.yaml`, eigene `credentials
 | `notify.py` | Telegram-`sendMessage` für Fehler/Status (no-op ohne Konfiguration) |
 | `review_bot.py` | Telegram-Bot (python-telegram-bot, JobQueue pollt alle 60 s Status `video`): Video+Skript+Quelle+Belege, Buttons Freigeben/Ablehnen, nur `TELEGRAM_CHAT_ID` |
 | `manual.py` | **Standard (`UPLOAD_MODE=manual`)**: Termin je freigegebenem Video (gleiche Slot-Logik), am Termin-Tag Upload-Paket an Telegram (MP4 als Dokument, Titel, Beschreibung inkl. Pixabay-Credit, Tags, Termin + Button `up:<id>`), Status `paket_gesendet` → Button → `hochgeladen` |
-| `upload.py` | YouTube Data API v3, privat + `publishAt` auf `publish_slots` (Berlin) verteilt, Quota je Pacific-Tag in SQLite, Token-Refresh schreibt `credentials/token_<key>.json` zurück |
+| `upload.py` | YouTube Data API v3, privat + `publishAt` auf `publish_slots` (Berlin) verteilt oder `--sofort`; Googles `quotaExceeded`/`uploadLimitExceeded` stoppen den Batch (Sperre bis Mitternacht PT), keine eigene Vorab-Rechnung; Token-Refresh schreibt `credentials/token_<key>.json` zurück |
+| `research.py` | Ausreißer-Recherche (CLI `research`, Seite „Recherche“): Shorts kleiner DE-Kanäle über die Data API (`YT_API_KEY`, kein OAuth, kein Scraping), Score = Aufrufe / Median der letzten 20 Uploads, Tabellen `research_*`, Auswertung mit Sonnet 5.5, Bericht + CSV in `docs/research/`, manuelle Sichtung im Web. Konfiguration `config/research.yaml` |
 | `actions.py` | Freigeben/Ablehnen/`regenerate` für Bot, CLI und Web (entfernt alte Telegram-Buttons) |
 | `publiccheck.py` | `check-public`: Sichtbarkeit von außen (oEmbed + playabilityStatus) |
 | `web/` | Webinterface (FastAPI, Port 8080, Dienst `web`): Passwort beim ersten Start (scrypt, Tabelle `app_settings`), signierte Cookies, Login-Sperre; Übersicht/Freigabe/Upload/Logs; **Zeitplan** (APScheduler, `schedule_<kanal>` in `app_settings`, Standard aus) startet CLI-Jobs als Subprozess (`job_runs`-Tabelle, Logs in `data/logs/`) |
-| `__main__.py` | CLI: `pipeline [--dry-run] [--limit N]`, `collect`, `status`, `retry <id>`, `bot`, `upload [--dry-run]` |
+| `__main__.py` | CLI: `pipeline [--dry-run] [--limit N]`, `collect`, `status`, `upload [--sofort] [--only ID]`, `check-public`, `research`, `regenerate`, `retry`, `auth-check`, `refresh-dates`, `bot`, `web`; flock auf `data/job.lock` |
 
 Status: `neu → skript → video → wartet_auf_freigabe → freigegeben → hochgeladen`; Nebenwege `verworfen`
 (Claude/zu kurz/veraltet >21 Tage), `abgelehnt` (Betreiber), `fehler` (retrybar via `retry`).
@@ -70,7 +71,7 @@ docker compose up -d bot
 - Claude liefert `key_facts` (1–3, Ziffern wie in der Quelle) + `date_label`; `unverified_numbers()` prüft jede
   Grafik-Zahl gegen den Quelltext → Warnung im Telegram-Review.
 - Stimme: `TTS_SPEED` **1.25** (ffmpeg **atempo** vor Whisper – im Hörvergleich gegenüber rubberband und
-  Originaltempo bevorzugt; Tempo 1,25 im zweiten Vergleich gewählt), OpenAI liefert WAV (verlustfrei). Skript 60–75 Wörter (siehe Retention-Regeln).
+  Originaltempo bevorzugt; Tempo 1,25 im zweiten Vergleich gewählt), OpenAI liefert WAV (verlustfrei). Skript 55–68 Wörter (siehe Retention-Regeln).
 - Testmodus (`--dry-run`, Demo-Pakete) nutzt espeak → klingt absichtlich roboterhaft; beim Versenden immer dazuschreiben.
 - **Kein fremdes Gameplay** (urheberrechtlich geschützt). Erlaubt: eigene Aufnahmen, Pixabay, eigene Animation.
 
@@ -97,15 +98,20 @@ docker compose up -d bot
 - Pexels wurde verworfen (keine neuen Keys).
 
 ## Wichtige Fakten / Stolpersteine
-- YouTube: ungeprüfte API-Projekte → Uploads dauerhaft privat; API-Audit beantragen. OAuth-Consent auf „In Produktion“,
-  sonst läuft das Refresh-Token nach 7 Tagen ab. Upload ≈ 1.600 Einheiten, Tageskontingent 10.000 (Reset Mitternacht Pacific Time).
+- YouTube: Laut Doku werden Uploads ungeprüfter API-Projekte privat; bei uns wurden `publishAt` und `--sofort` trotzdem
+  öffentlich (von außen geprüft) – weiter mit `check-public` beobachten, Audit offen. OAuth-Consent auf „In Produktion“,
+  sonst läuft das Refresh-Token nach 7 Tagen ab.
+- Kontingent-Modell: `videos.insert` und `search.list` haben je einen eigenen Topf von 100 Aufrufen/Tag; übrige Endpunkte
+  teilen sich 10.000 Einheiten (Reset Mitternacht Pacific Time). Maßgeblich sind Googles Fehlermeldungen, nicht eigene Zähler.
 - Verbraucherzentrale hat kein RSS → `type: html` mit `link_pattern` (Startseite, eher Ratgeber als News).
 - Bundesregierung-Feeds: `/service/rss/breg-de/<id>/feed.xml` (1151246 Artikel, 1151244 Pressemitteilungen).
 - feedparser liefert UTC-`struct_time` → `calendar.timegm`, nicht `mktime` (Container-TZ ist Berlin).
 
-## Stand (2026-11-20 abends)
-**Läuft:** Timer (Pipeline So 06:00, Upload täglich 09:30), Review-Bot (`docker compose up -d bot`),
-`UPLOAD_MODE=api`, `TTS_SPEED=1.25`, Pixabay aktiv. 57 Tests grün, pyflakes sauber.
+## Stand (2026-11-25)
+**Zeitsteuerung:** nur noch der Zeitplan im Webinterface (APScheduler, `schedule_<kanal>` in `app_settings`).
+systemd-Timer sind deaktiviert (Units liegen noch in `deploy/`). Aktiv: Sichtbarkeitsprüfung täglich 12:00.
+Erstellen und Upload sind im Web aus → der Betreiber startet sie von Hand. Dienste: `bot`, `web` (Port 8080).
+`UPLOAD_MODE=api`, `TTS_SPEED=1.25`, Pixabay aktiv. Statusbericht: `docs/STATUS.md`.
 
 **YouTube ohne Audit – Beobachtungen (20.11.):**
 - Funktioniert, von außen geprüft: von Hand veröffentlichen (#1), `publishAt` (#619, 19:30 → 19:31 öffentlich),
@@ -127,13 +133,15 @@ melden einmal, manuell geht weiter). Rate-Limits/5xx: 3 Versuche mit Backoff. Ei
 (`upload_counts`, `YT_UPLOADS_PER_DAY`) nur zur Anzeige. Termin wird erst nach erfolgreichem Upload gespeichert.
 
 **Webinterface:** läuft (`docker compose up -d web`), Passwort legt der Betreiber beim ersten Aufruf fest.
-Zeitplan im Web ist aus, bis die systemd-Timer deaktiviert sind (braucht sudo vom Betreiber):
-`sudo systemctl disable --now shorts-pipeline.timer shorts-upload.timer`.
+
+**Ausreißer-Recherche (seit 25.11.):** `docker compose run --rm job research --terms 10`. Nur Data API v3 mit
+`YT_API_KEY`; max. 40 search-Aufrufe/Lauf; Kanal-Median 7 Tage gecacht; jeder Lauf schreibt Snapshots (Wachstum).
+Titelmuster/Längen/Kanäle werden im Code exakt gezählt, Claude (Sonnet 5.5, effort medium) deutet nur und liefert
+Cluster + 10 Ideen. Manuelle Sichtung der ersten 3 s im Web; ab 15 Sichtungen „Muster auswerten“.
 
 **Offen / Ideen:**
 - Whisper-Abgleich per Sequenz-Alignment (Wortzahl weicht oft ab → derzeit Schätzung im Sprechfenster).
 - Untertitel zeigen Zahlen ausgeschrieben ("ZWEITAUSENDZWANZIG") – ggf. Ziffern anzeigen.
-- #104 (alte Fassung) wartet noch auf Freigabe → besser `regenerate 104`.
 - Englischer Kanal, Piper als günstige TTS, eigene Hintergrundclips.
 
 **Lehren:** Ein abgebrochener `docker compose run` läuft im Hintergrund weiter → `flock` auf `data/job.lock`.
