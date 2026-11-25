@@ -29,6 +29,9 @@ sich daran; die CSS-Variablen stehen in `base.html`, die Bausteine in `_macros.h
 
 Alte Adressen (`/settings`, `/research`, `/research/<id>/review`, `/#t<id>`) funktionieren weiter.
 Navigation: Freigabe zeigt die Zahl wartender Videos, Jobs „läuft“ oder die Zahl der Fehler der letzten 24 h.
+Ab zwei Kanälen wird der Kanalname oben links zum Umschalter (Select ohne Rahmen im Stil des Namens, Rahmen erst
+bei Hover); andere Kanäle mit wartenden Videos zeigen dort „· N warten“. Detailseiten springen beim Wechsel auf
+die Liste zurück.
 
 ## Tokens
 

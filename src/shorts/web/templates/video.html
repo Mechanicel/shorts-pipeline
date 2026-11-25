@@ -3,7 +3,8 @@
 <p style="margin-bottom:8px"><a href="/videos">← Videos</a></p>
 <div class="page-head">
   <div><h1>#{{ t.id }} {{ s_.get("title", t.title) }}</h1>
-    <div class="row" style="margin-top:8px">{{ ui.badge(state) }} <span class="style-tag">{{ style }}</span>
+    <div class="row" style="margin-top:8px">{{ ui.badge(state) }} <span class="style-tag">{{ style }}</span>{% if t.style_pick %} <span class="muted">Stil von Hand gewählt</span>{% endif %}
+      {% if channels|length > 1 %}<span class="muted">Kanal {{ channel_name }}</span>{% endif %}
       {% if t.publish_at and state != "gelöscht" %}<span class="muted">Termin {{ ui.when(t.publish_at) }}</span>{% endif %}
       {% if state == "gelöscht" %}<span class="muted">gelöscht (erkannt {{ t.yt_deleted_at | dt if t.yt_deleted_at else "unbekannt" }})</span>{% endif %}</div></div>
   <div class="row">{% if t.youtube_id %}

@@ -104,6 +104,7 @@ class Pipeline:
         self.tts = tts or get_tts(settings, channel, dry_run=dry_run)
         self._run_cost = 0.0
         self.skip_age_check = False  # nur für Vorschauen (preview): ältere Quellen zulassen
+        self.style_pick: str | None = None  # 'v2'/'v3' von Hand für diesen Lauf (pipeline --style), sonst STYLE_MODE
         self.triage = triage or (PassAllTriage() if dry_run else HaikuTriage(settings, channel))
 
     # ------------------------------------------------------------------ steps
@@ -227,7 +228,10 @@ class Pipeline:
         args = dict(headline=topic.title, url=topic.url, source_name=topic.source_name, text=text,
                     source_date=(date_str or "unbekannt")[:10], covered=covered_listing(covered))
         fallback_note = None
-        if self.choose_style() == STYLE_V3 and hasattr(self.writer, "write_v3"):
+        if self.style_pick and not topic.style_pick:  # von Hand gewählt → am Thema merken (Statistik)
+            self.db.update_fields(topic.id, style_pick=self.style_pick)
+            topic = self.db.get(topic.id)
+        if self.choose_style(topic) == STYLE_V3 and hasattr(self.writer, "write_v3"):
             try:
                 merk = self.writer.write_v3(**args)
             finally:
@@ -277,10 +281,11 @@ class Pipeline:
             report.cost_usd += usd or 0.0
         self.writer.spent = []
 
-    def choose_style(self) -> str:
-        """STYLE_MODE: v2 | v3 | alternate. alternate gibt dem bisher selteneren Stil den Vorzug (bei Gleichstand v3),
-        sodass beide über die Woche gleich oft – und damit an wechselnden Wochentagen – erscheinen."""
-        mode = self.s.style_mode
+    def choose_style(self, topic: Topic | None = None) -> str:
+        """Von Hand gewählter Stil (am Thema oder für den Lauf) vor STYLE_MODE: v2 | v3 | alternate.
+        alternate gibt dem bisher selteneren Stil den Vorzug (bei Gleichstand v3), sodass beide über die Woche
+        gleich oft – und damit an wechselnden Wochentagen – erscheinen."""
+        mode = (topic.style_pick if topic else None) or self.style_pick or self.s.style_mode
         if mode in ("v2", STYLE_V2):
             return STYLE_V2
         if mode in ("v3", STYLE_V3):

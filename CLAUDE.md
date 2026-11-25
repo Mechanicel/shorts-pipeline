@@ -48,8 +48,8 @@ eigenen Quellen → neuer Eintrag in `config/channels.yaml`, eigene `credentials
 | `analytics.py` | YouTube Analytics API (`yt-analytics.readonly`, Token mit beiden Scopes via `auth_youtube.py`): täglich views/engagedViews/Ø-Dauer/Ø-%/Likes/Kommentare/Shares in `yt_stats`, Aufrufe nach 72 h in `topics.yt_views_72h`, Stil-Vergleich im Dashboard. „Angesehen vs. weggewischt“ liefert die API NICHT → Eingabefeld (`topics.yt_viewed_rate`) |
 | `actions.py` | Freigeben/Ablehnen/`regenerate` für Bot, CLI und Web (entfernt alte Telegram-Buttons) |
 | `publiccheck.py` | `check-public`: Sichtbarkeit von außen (oEmbed + playabilityStatus) |
-| `web/` | Webinterface (FastAPI, Port 8080, Dienst `web`): Seiten Heute · Freigabe · Videos · Statistik · Recherche · Jobs · Einstellungen (je eine Aufgabe), `views.py` = testbare Aufbereitung (Reiter, Zeitleiste, Klartext-Fehler, SVG-Diagramm), Passwort beim ersten Start (scrypt), Login-Sperre; **Zeitplan** (APScheduler, `schedule_<kanal>` in `app_settings`) startet CLI-Jobs als Subprozess (`job_runs`, Logs in `data/logs/`). **Design: `docs/ui/DESIGN.md` verbindlich** |
-| `__main__.py` | CLI: `pipeline [--dry-run] [--limit N]`, `collect`, `status`, `upload [--sofort] [--only ID]`, `check-public`, `research`, `regenerate`, `retry`, `auth-check`, `refresh-dates`, `bot`, `web`; flock auf `data/job.lock` |
+| `web/` | Webinterface (FastAPI, Port 8080, Dienst `web`): Seiten Heute · Freigabe · Videos · Statistik · Recherche · Jobs · Einstellungen (je eine Aufgabe), **Kanal pro Anfrage** (Cookie `kanal`, Umschalter oben links ab 2 Kanälen, `current(request)` statt festem Kanal, ein Scheduler je Kanal), `views.py` = testbare Aufbereitung (Reiter, Zeitleiste, Klartext-Fehler, SVG-Diagramm), Passwort beim ersten Start (scrypt), Login-Sperre; **Zeitplan** (APScheduler, `schedule_<kanal>` in `app_settings`) startet CLI-Jobs als Subprozess (`job_runs`, Logs in `data/logs/`). **Design: `docs/ui/DESIGN.md` verbindlich** |
+| `__main__.py` | CLI: `pipeline [--dry-run] [--limit N] [--style v2|v3]`, `collect`, `status`, `upload [--sofort] [--only ID]`, `check-public`, `research`, `regenerate <id> [--style v2|v3]`, `retry`, `auth-check`, `refresh-dates`, `bot`, `web`; flock auf `data/job.lock` |
 
 Status: `neu → skript → video → wartet_auf_freigabe → freigegeben → hochgeladen`; Nebenwege `verworfen`
 (Claude/zu kurz/veraltet >21 Tage), `abgelehnt` (Betreiber), `fehler` (retrybar via `retry`).
@@ -150,7 +150,8 @@ melden einmal, manuell geht weiter). Rate-Limits/5xx: 3 Versuche mit Backoff. Ei
 **Webinterface:** läuft (`docker compose up -d web`), Passwort legt der Betreiber beim ersten Aufruf fest.
 
 **Stil v3 / Vergleich (seit 25.11.):** `STYLE_MODE=alternate` (Standard) gibt dem selteneren Stil den Vorzug →
-v2 und v3 gleich oft, an wechselnden Wochentagen; Stil in `topics.style`. v3 nicht möglich (< 3 listenfähige
+v2 und v3 gleich oft, an wechselnden Wochentagen; Stil in `topics.style`. Von Hand gewählt (Web, `--style`) →
+`topics.style_pick`, hat Vorrang vor `STYLE_MODE`; `regenerate` ohne Stil setzt ihn zurück. v3 nicht möglich (< 3 listenfähige
 Fakten oder nur alte Regeln) → Grund in der Notiz, Thema läuft als v2. Vorschau ohne Upload/echte DB:
 `docker compose run --rm job preview <URL> [--only v2|v3]` → Telegram. Anthropic-Clients mit `timeout=240`
 (eine hängende Verbindung blockierte sonst 10 min). Quellen: „Bundesregierung – Neuregelungen“ (Hub-Seite der

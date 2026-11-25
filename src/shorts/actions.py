@@ -58,8 +58,11 @@ def update_metadata(db: Database, topic_id: int, title: str, description: str, h
     return db.get(topic_id)
 
 
-def regenerate(settings: Settings, db: Database, topic_id: int) -> Topic:
-    """Thema (wartend/abgelehnt/fehler) mit neuem Skript + Video neu einreihen."""
+def regenerate(settings: Settings, db: Database, topic_id: int, style_pick: str | None = None) -> Topic:
+    """Thema (wartend/abgelehnt/fehler) mit neuem Skript + Video neu einreihen; style_pick 'v2'/'v3' erzwingt
+    den Stil, None = automatisch."""
+    if style_pick not in (None, "v2", "v3"):
+        raise ValueError(f"Unbekannter Stil '{style_pick}'.")
     t = db.get(topic_id)
     if t.status in (Status.WARTET, Status.VIDEO):
         db.transition(t.id, Status.ABGELEHNT, note="abgelehnt zur Neuerzeugung")
@@ -67,6 +70,6 @@ def regenerate(settings: Settings, db: Database, topic_id: int) -> Topic:
         raise ValueError(f"Thema {t.id} ist im Status {t.status} – regenerate geht nur für "
                          "wartend/abgelehnt/fehler.")
     old_msg = t.telegram_message_id
-    topic = db.regenerate(t.id)
+    topic = db.regenerate(t.id, style_pick=style_pick)
     retire_review_message(settings, old_msg, f"❌ #{topic_id} abgelehnt – wird beim nächsten Lauf neu erzeugt.")
     return topic

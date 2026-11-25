@@ -164,14 +164,16 @@ def needs_attention(failed: list[Topic], deadline_warnings: list[tuple[Topic, st
     return out
 
 
-def views_last_days(db: Database, days: int = 7, today: datetime | None = None) -> int | None:
+def views_last_days(db: Database, days: int = 7, today: datetime | None = None, channel: str | None = None) -> int | None:
     """Aufrufe der letzten N Tage aus den täglichen Gesamtständen (yt_stats): aktueller Stand minus Stand vor N
     Tagen je Video. None, wenn noch keine Analytics-Daten vorliegen."""
     from ..analytics import ensure_schema
     ensure_schema(db)
     today = today or datetime.now(timezone.utc)
     cutoff = (today - timedelta(days=days)).date().isoformat()
-    rows = db._conn.execute("SELECT topic_id, day, views FROM yt_stats ORDER BY topic_id, day").fetchall()
+    where, params = (" WHERE topic_id IN (SELECT id FROM topics WHERE channel=?)", (channel,)) if channel else ("", ())
+    rows = db._conn.execute(f"SELECT topic_id, day, views FROM yt_stats{where} ORDER BY topic_id, day",
+                            params).fetchall()
     if not rows:
         return None
     latest: dict[int, int] = {}

@@ -270,3 +270,64 @@ def test_recherche_seite_und_sichtung(env) -> None:
     assert r.status_code == 303
     assert store.review_count() == 1 and "1 von 15 auswertbar" in client.get("/recherche").text
     assert client.post("/research/..%2Fetc/review", data={}).status_code == 404
+
+
+# ------------------------------------------------------------------ Mehrere Kanäle
+@pytest.fixture
+def two_channels(tmp_path: Path):
+    import yaml
+    raw = yaml.safe_load(Settings().channels_file.read_text(encoding="utf-8"))
+    raw["channels"]["en"] = {**raw["channels"]["de"], "name": "What changes for you", "language": "en"}
+    cfile = tmp_path / "channels.yaml"
+    cfile.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+    settings = replace(Settings(), data_dir=tmp_path / "data", output_dir=tmp_path / "output",
+                       telegram_bot_token=None, telegram_chat_id=None, channels_file=cfile)
+    settings.data_dir.mkdir()
+    settings.output_dir.mkdir()
+    client = TestClient(create_app(settings, start_scheduler=False))
+    _setup(client)
+    return settings, client
+
+
+def test_ein_kanal_ohne_umschalter(env) -> None:
+    _, client = env
+    _setup(client)
+    assert 'action="/kanal"' not in client.get("/").text
+
+
+def test_kanal_umschalten_filtert_seiten(two_channels) -> None:
+    settings, client = two_channels
+    video = settings.output_dir / "short.mp4"
+    video.write_bytes(b"mp4")
+    tid = _waiting_topic(settings, video)  # wartet im Kanal de
+    page = client.get("/freigabe").text
+    assert 'action="/kanal"' in page and "Nichts wartet auf Freigabe" not in page
+    r = client.post("/kanal", data={"key": "en", "next": f"/videos/{tid}"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/videos"  # Detailseite → Liste
+    page = client.get("/freigabe").text
+    assert "Nichts wartet auf Freigabe" in page
+    assert "· 1 warten" in page  # Hinweis auf den anderen Kanal im Umschalter
+    assert client.post("/kanal", data={"key": "xx"}).status_code == 404
+
+
+def test_erstellen_mit_kanal_und_stil(two_channels) -> None:
+    _, client = two_channels
+    started = []
+    client.app.state.runner.launch = lambda kind, args, trigger: started.append(args) or 1
+    client.post("/kanal", data={"key": "en"})
+    client.post("/actions/new-video", data={"count": "2", "style": "v3"})
+    client.post("/actions/new-video", data={"count": "1", "style": "auto"})
+    assert started == [["pipeline", "--channel", "en", "--limit", "2", "--style", "v3"],
+                       ["pipeline", "--channel", "en", "--limit", "1"]]
+    from shorts.web.app import job_label
+    assert job_label(json.dumps(started[0])) == "Videos erstellen (2) · v3"
+
+
+def test_neu_erzeugen_mit_stil_im_web(env) -> None:
+    settings, client = env
+    _setup(client)
+    tid = _waiting_topic(settings, settings.output_dir / "x.mp4")
+    assert 'name="style"' in client.get("/freigabe").text
+    client.post(f"/topics/{tid}/regenerate", data={"style": "v2"})
+    t = Database(settings.db_path).get(tid)
+    assert t.status == Status.NEU and t.style_pick == "v2"

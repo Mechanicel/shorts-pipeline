@@ -154,6 +154,7 @@ class Topic:
     yt_views_72h: str | None
     video_seconds: str | None
     yt_deleted_at: str | None
+    style_pick: str | None  # von Hand gewählter Stil (v2/v3); None = automatisch nach STYLE_MODE
     created_at: str
     updated_at: str
 
@@ -165,6 +166,7 @@ class Topic:
     def from_row(cls, row: sqlite3.Row) -> "Topic":
         d = dict(row)
         d["status"] = Status(d["status"])
+        d.setdefault("style_pick", None)
         return cls(**d)
 
 
@@ -184,7 +186,7 @@ class Database:
         """Fehlende Spalten bei bestehenden Datenbanken ergänzen (nur additive Änderungen)."""
         wanted = {"topics": ("background_credit", "cost_json", "yt_visibility", "yt_checked_at", "yt_published_at",
                              "triage", "triage_score", "style", "yt_viewed_rate", "yt_views_72h",
-                             "video_seconds", "yt_deleted_at"),
+                             "video_seconds", "yt_deleted_at", "style_pick"),
                   "job_runs": ("result_status", "result_summary")}
         # Alte Einheiten-Zählung (1.600 je Upload) einmalig in Upload-Anzahl übernehmen
         if not self._conn.execute("SELECT 1 FROM upload_counts LIMIT 1").fetchone():
@@ -256,11 +258,12 @@ class Database:
         log.info("Thema %s: %s → %s", topic_id, topic.status, new)
         return self.get(topic_id)
 
-    def regenerate(self, topic_id: int) -> Topic:
-        """Thema mit frischem Skript/Video neu einreihen; Quelltext bleibt, Artefakte werden geleert."""
+    def regenerate(self, topic_id: int, style_pick: str | None = None) -> Topic:
+        """Thema mit frischem Skript/Video neu einreihen; Quelltext bleibt, Artefakte werden geleert.
+        style_pick: 'v2'/'v3' erzwingt den Stil beim nächsten Lauf, None = automatisch."""
         return self.transition(topic_id, Status.NEU, script_json=None, audio_path=None, video_path=None,
                                note=None, telegram_message_id=None, publish_at=None,
-                               background_credit=None)
+                               background_credit=None, style_pick=style_pick)
 
     def add_cost(self, topic_id: int, part: str, usd: float | None) -> None:
         """Kosten (USD) je Teil aufsummieren; bleibt auch bei regenerate erhalten (echte Ausgaben)."""
@@ -379,17 +382,19 @@ class Database:
             (channel, *self.COVERED, since))
         return [Topic.from_row(r) for r in rows]
 
-    def recent_topics(self, statuses: list[Status], limit: int = 30) -> list[Topic]:
+    def recent_topics(self, statuses: list[Status], limit: int = 30, channel: str | None = None) -> list[Topic]:
         marks = ",".join("?" * len(statuses))
+        where, params = (" AND channel=?", (channel,)) if channel else ("", ())
         rows = self._conn.execute(
-            f"SELECT * FROM topics WHERE status IN ({marks}) ORDER BY updated_at DESC, id DESC LIMIT ?",
-            (*statuses, limit))
+            f"SELECT * FROM topics WHERE status IN ({marks}){where} ORDER BY updated_at DESC, id DESC LIMIT ?",
+            (*statuses, *params, limit))
         return [Topic.from_row(r) for r in rows]
 
-    def costs_since(self, iso: str) -> float:
+    def costs_since(self, iso: str, channel: str | None = None) -> float:
         from .costs import total
-        rows = self._conn.execute("SELECT cost_json FROM topics WHERE cost_json IS NOT NULL AND updated_at >= ?",
-                                  (iso,))
+        where, params = (" AND channel=?", (channel,)) if channel else ("", ())
+        rows = self._conn.execute("SELECT cost_json FROM topics WHERE cost_json IS NOT NULL AND updated_at >= ?"
+                                  + where, (iso, *params))
         return sum(total(r[0]) for r in rows)
 
     # --- Quota --------------------------------------------------------------

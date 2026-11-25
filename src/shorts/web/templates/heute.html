@@ -6,6 +6,8 @@
     <form method="post" action="/actions/new-video" class="row">
       <label for="count" class="sr-only">Anzahl</label>
       <select name="count" id="count">{% for n in range(1, 8) %}<option value="{{ n }}">{{ n }}</option>{% endfor %}</select>
+      <label for="style" class="sr-only">Stil</label>
+      <select name="style" id="style" title="Stil">{% for key, label in style_choices.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
       <button {% if running %}disabled{% endif %}>Videos erstellen</button>
     </form>
     <form method="post" action="/actions/check-public"><button class="secondary" {% if running %}disabled{% endif %}>Sichtbarkeit prüfen</button></form>

@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Red
 from fastapi.templating import Jinja2Templates
 
 from .. import actions
-from ..config import Settings, get_channel, load_settings
+from ..config import ChannelConfig, Settings, load_channels, load_settings
 from ..costs import format_cost
 from ..analytics import latest_stats, style_comparison
 from ..deadline import choose_slot, deadline_of
@@ -39,6 +39,8 @@ JOBS_PER_PAGE = 25
 log = logging.getLogger(__name__)
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 PUBLIC_PATHS = {"/login", "/setup", "/healthz"}
+CHANNEL_COOKIE = "kanal"
+STYLE_CHOICES = {"auto": "Abwechselnd", "v2": "v2 · Hook-Tafel", "v3": "v3 · Merkliste"}
 
 
 def local_time(iso: str | None) -> str:
@@ -51,7 +53,8 @@ def job_label(args_json: str) -> str:
     kind = a[0] if a else "?"
     if kind == "pipeline":
         n = a[a.index("--limit") + 1] if "--limit" in a else "?"
-        return f"Videos erstellen ({n})"
+        style = a[a.index("--style") + 1] if "--style" in a else "auto"
+        return f"Videos erstellen ({n})" + (f" · {style}" if style in ("v2", "v3") else "")
     if kind == "upload":
         how = "sofort" if "--sofort" in a else ("Wunschtermin" if "--publish-at" in a else "nächste Termine")
         only = f" · #{a[a.index('--only') + 1]}" if "--only" in a else ""
@@ -125,25 +128,32 @@ TEMPLATES.env.globals.update(duration=duration, warning_badges=warning_badges, p
 
 def create_app(settings: Settings | None = None, start_scheduler: bool = True) -> FastAPI:
     s = settings or load_settings()
-    channel = get_channel(s.default_channel)
+    channels = load_channels(s.channels_file)
+    default_key = s.default_channel if s.default_channel in channels else next(iter(channels))
 
     def db() -> Database:  # eine Verbindung pro Request/Thread (sqlite3 ist nicht threadsicher)
         return Database(s.db_path)
 
+    def current(request: Request) -> ChannelConfig:
+        """Gewählter Kanal (Cookie), sonst DEFAULT_CHANNEL."""
+        return channels.get(request.cookies.get(CHANNEL_COOKIE, ""), channels[default_key])
+
     runner = JobRunner(s, db)
-    scheduler = Scheduler(db, channel, runner.launch)
+    schedulers = {key: Scheduler(db, ch, runner.launch) for key, ch in channels.items()}  # Zeitplan je Kanal
     throttle = auth.LoginThrottle()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         if start_scheduler:
-            scheduler.start()
+            for sch in schedulers.values():
+                sch.start()
         yield
         if start_scheduler:
-            scheduler.shutdown()
+            for sch in schedulers.values():
+                sch.shutdown()
 
     app = FastAPI(title="Shorts-Pipeline", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
-    app.state.runner, app.state.scheduler = runner, scheduler
+    app.state.runner, app.state.schedulers = runner, schedulers
 
     # ------------------------------------------------------------------ Zugriffsschutz
     @app.middleware("http")
@@ -164,25 +174,32 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
     async def http_error(request: Request, exc: StarletteHTTPException):
         text = {404: "Seite oder Eintrag nicht gefunden", 405: "Diese Aktion geht so nicht"}.get(
             exc.status_code, f"Fehler {exc.status_code}")
-        return TEMPLATES.TemplateResponse(request, "error.html", {"channel": channel, "running": None, "nav": {},
+        return TEMPLATES.TemplateResponse(request, "error.html", {"channel": current(request), "channels": channels, "running": None, "nav": {},
                                           "path": request.url.path, "code": exc.status_code, "text": text},
                                           status_code=exc.status_code)
 
     @app.exception_handler(Exception)
     async def server_error(request: Request, exc: Exception):
         log.exception("Fehler bei %s", request.url.path)
-        return TEMPLATES.TemplateResponse(request, "error.html", {"channel": channel, "running": None, "nav": {},
+        return TEMPLATES.TemplateResponse(request, "error.html", {"channel": current(request), "channels": channels, "running": None, "nav": {},
                                           "path": request.url.path, "code": 500,
                                           "text": "Interner Fehler, Details stehen im Log des Web-Dienstes"},
                                           status_code=500)
 
+    def waiting_count(d: Database, key: str) -> int:
+        return len(d.by_status(Status.VIDEO, key)) + len(d.by_status(Status.WARTET, key))
+
     def page(request: Request, name: str, **ctx) -> HTMLResponse:
         d = db()
+        channel = current(request)
         running = runner.running()
-        nav = {"freigabe": len(d.by_status(Status.VIDEO, channel.key)) + len(d.by_status(Status.WARTET, channel.key)),
+        nav = {"freigabe": waiting_count(d, channel.key),
                "jobs": "läuft" if running else d.job_problems_since(
                    (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(timespec="seconds"))}
-        return TEMPLATES.TemplateResponse(request, name, {"channel": channel, "running": running, "nav": nav,
+        # Andere Kanäle mit wartenden Videos: Hinweis im Kanal-Umschalter, damit nichts liegen bleibt
+        others = {k: waiting_count(d, k) for k in channels if k != channel.key} if len(channels) > 1 else {}
+        return TEMPLATES.TemplateResponse(request, name, {"channel": channel, "channels": channels,
+                                                          "others_waiting": others, "running": running, "nav": nav,
                                                           "path": request.url.path, **ctx})
 
     def safe_next(target: str | None, default: str) -> str:
@@ -246,7 +263,7 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         return r
 
     # ------------------------------------------------------------------ Gemeinsame Daten
-    def approval_context(d: Database, now: datetime) -> dict:
+    def approval_context(d: Database, channel: ChannelConfig, now: datetime) -> dict:
         sched = load_schedule(d, channel)
         free_slots = upcoming_free_slots(sched["publish_slots"], d.taken_publish_slots(channel.key), now, 6)
         approved = d.by_status(Status.FREIGEGEBEN, channel.key)
@@ -263,12 +280,13 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         from ..deadline import planned_stock, stock_warning
 
         d = db()
+        channel = current(request)
         now = datetime.now(timezone.utc)
-        ctx = approval_context(d, now)
+        ctx = approval_context(d, channel, now)
         stock = planned_stock(d.planned_publish_times(channel.key), now)
         month_start = (now - timedelta(days=30)).isoformat()
         videos_30 = [t for t in d.recent_topics([Status.VIDEO, Status.WARTET, Status.FREIGEGEBEN, Status.PAKET,
-                                                  Status.HOCHGELADEN], 300)
+                                                  Status.HOCHGELADEN], 300, channel.key)
                      if t.cost_json and t.updated_at >= month_start]
         avg_video = (sum(cost_total(t.cost_json) for t in videos_30) / len(videos_30)) if videos_30 else 0.0
         deadline_warnings = [(t, h.warning) for t in ctx["approved"] if (h := ctx["slot_hints"][t.id]).warning]
@@ -279,8 +297,8 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         attention = needs_attention(d.by_status(Status.FEHLER, channel.key), deadline_warnings,
                                     stock_warning(stock), block["text"] if block else None)
         return page(request, "heute.html", msg=msg, err=err, attention=attention, stock=stock,
-                    waiting_n=len(ctx["waiting"]), views7=views_last_days(d, 7),
-                    cost_month=d.costs_since(month_start), avg_video=avg_video, eur=s.eur_per_usd,
+                    waiting_n=len(ctx["waiting"]), views7=views_last_days(d, 7, channel=channel.key),
+                    cost_month=d.costs_since(month_start, channel.key), style_choices=STYLE_CHOICES, avg_video=avg_video, eur=s.eur_per_usd,
                     rows=timeline(d, channel.key, ctx["sched"]["publish_slots"], now), now=now,
                     in_work=d.by_status(Status.SKRIPT, channel.key))
 
@@ -288,18 +306,20 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
     @app.get("/freigabe")
     def freigabe(request: Request, msg: str = "", err: str = ""):
         d = db()
+        channel = current(request)
         now = datetime.now(timezone.utc)
-        ctx = approval_context(d, now)
-        uploaded = d.recent_topics([Status.HOCHGELADEN, Status.PAKET], 15)
+        ctx = approval_context(d, channel, now)
+        uploaded = d.recent_topics([Status.HOCHGELADEN, Status.PAKET], 15, channel.key)
         return page(request, "freigabe.html", msg=msg, err=err, **ctx, uploads=upload_status(s, d, now),
                     api_public=any(t.youtube_id and t.yt_visibility == "öffentlich" for t in uploaded),
                     upload_mode=s.upload_mode, source_date_label=source_date_label, format_cost=format_cost,
-                    word_count=word_count, eur=s.eur_per_usd)
+                    word_count=word_count, eur=s.eur_per_usd, style_choices=STYLE_CHOICES)
 
     # ------------------------------------------------------------------ Videos
     @app.get("/videos")
     def videos(request: Request, tab: str = "geplant", msg: str = "", err: str = ""):
         d = db()
+        channel = current(request)
         now = datetime.now(timezone.utc)
         tab = tab if tab in TABS else "geplant"
         rows = video_rows(d, channel.key, tab, now, latest_stats(d))
@@ -321,12 +341,15 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
                     history=d.visibility_history(t.id), format_cost=format_cost, eur=s.eur_per_usd,
                     studio_url=STUDIO_URL, source_date_label=source_date_label, word_count=word_count,
                     error=humanize_error(t.note) if t.status == Status.FEHLER else None,
-                    has_board=bool(t.video_path and (Path(t.video_path).parent / "board.png").exists()))
+                    has_board=bool(t.video_path and (Path(t.video_path).parent / "board.png").exists()),
+                    style_choices=STYLE_CHOICES,
+                    channel_name=channels[t.channel].name if t.channel in channels else t.channel)
 
     # ------------------------------------------------------------------ Statistik
     @app.get("/statistik")
     def statistik(request: Request, msg: str = "", err: str = ""):
         d = db()
+        channel = current(request)
         now = datetime.now(timezone.utc)
         stats = latest_stats(d)
         public = video_rows(d, channel.key, "oeffentlich", now, stats)
@@ -403,15 +426,31 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
             return back(err="Es läuft bereits ein Job. Bitte warten, bis er fertig ist", to=to)
         return back(msg=f"{label} gestartet", to=to)
 
+    @app.post("/kanal")
+    def switch_channel(key: str = Form(...), next: str = Form("/")):
+        if key not in channels:
+            raise HTTPException(404)
+        to = safe_next(next, "/")
+        if re.match(r"^/(videos|recherche|jobs)/[^/]+$", to.split("?")[0]):  # Detailseite → Liste
+            to = to.split("?")[0].rsplit("/", 1)[0]
+        r = RedirectResponse(to, status_code=303)
+        r.set_cookie(CHANNEL_COOKIE, key, max_age=365 * 86400, httponly=True, samesite="strict")
+        return r
+
     @app.post("/actions/new-video")
-    def new_video(count: int = Form(1)):
+    def new_video(request: Request, count: int = Form(1), style: str = Form("auto")):
+        channel = current(request)
         count = max(1, min(count, 10))
-        return start("pipeline", ["pipeline", "--channel", channel.key, "--limit", str(count)],
-                     f"Erstellung von {plural_de(count, 'Video', 'Videos')}")
+        args = ["pipeline", "--channel", channel.key, "--limit", str(count)]
+        picked = style if style in ("v2", "v3") else None
+        if picked:
+            args += ["--style", picked]
+        label = f"Erstellung von {plural_de(count, 'Video', 'Videos')}" + (f" ({picked})" if picked else "")
+        return start("pipeline", args, label)
 
     @app.post("/actions/upload")
-    def upload(when: str = Form("termin"), at: str = Form("")):
-        args = ["upload", "--channel", channel.key]
+    def upload(request: Request, when: str = Form("termin"), at: str = Form("")):
+        args = ["upload", "--channel", current(request).key]
         if when == "sofort":
             args.append("--sofort")
         elif when == "wunsch":
@@ -426,7 +465,7 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
 
     @app.post("/actions/upload-one")
     def upload_one(topic_id: int = Form(...), slot: str = Form("next")):
-        args = ["upload", "--channel", channel.key, "--only", str(topic_id)]
+        args = ["upload", "--channel", db().get(topic_id).channel, "--only", str(topic_id)]
         if slot == "sofort":
             args += ["--sofort", "--mode", "api"]
         elif slot != "next":  # konkreter Termin aus dem Dropdown (UTC-ISO)
@@ -455,11 +494,11 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         return back(msg=f"#{topic_id}: YouTube-Angaben gespeichert", to=to)
 
     @app.post("/actions/check-public")
-    def check_public():
-        return start("check-public", ["check-public", "--channel", channel.key], "Sichtbarkeitsprüfung")
+    def check_public(request: Request):
+        return start("check-public", ["check-public", "--channel", current(request).key], "Sichtbarkeitsprüfung")
 
     @app.post("/topics/{topic_id}/{action}")
-    def topic_action(topic_id: int, action: str, next: str = Form("")):
+    def topic_action(topic_id: int, action: str, next: str = Form(""), style: str = Form("auto")):
         d = db()
         to = safe_next(next, "/freigabe")
         try:
@@ -473,8 +512,10 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
                 actions.unapprove(d, topic_id)
                 return back(msg=f"#{topic_id}: Freigabe zurückgenommen", to=to)
             if action == "regenerate":
-                actions.regenerate(s, d, topic_id)
-                return back(msg=f"#{topic_id} wird beim nächsten Lauf neu erzeugt", to=to)
+                pick = style if style in ("v2", "v3") else None
+                actions.regenerate(s, d, topic_id, style_pick=pick)
+                return back(msg=f"#{topic_id} wird beim nächsten Lauf neu erzeugt" + (f" (als {pick})" if pick else ""),
+                            to=to)
             if action == "retry":
                 t = d.get(topic_id)
                 back_to = {"neu": Status.NEU, "skript": Status.SKRIPT, "video": Status.SKRIPT,
@@ -488,6 +529,7 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
     # ------------------------------------------------------------------ Zeitplan
     def settings_page(request: Request, sched: dict, msg: str = "", err: str = ""):
         d, now = db(), datetime.now(timezone.utc)
+        channel = current(request)
         try:
             preview = upcoming_free_slots(sched["publish_slots"], d.taken_publish_slots(channel.key), now, 5)
         except Exception:
@@ -505,7 +547,7 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         rows = [(slot.split()[0].lower()[:3], slot.split()[1]) for slot in sched["publish_slots"]]
         rows += [("", "")] * 3  # leere Zeilen zum Hinzufügen
         return page(request, "einstellungen.html", msg=msg, err=err, sched=sched, days=DAYS, day_labels=DAY_LABELS,
-                    next_runs=scheduler.next_runs(), preview=preview, balance=balance, slot_rows=rows,
+                    next_runs=schedulers[channel.key].next_runs(), preview=preview, balance=balance, slot_rows=rows,
                     reset_time=f"{quota_reset(now):%H:%M}")
 
     # ---------------------------------------------------------------- Ausreißer-Recherche
@@ -546,19 +588,19 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         return back(msg="Sichtung gespeichert", to="/recherche")
 
     @app.post("/actions/research")
-    def research_run(terms: int = Form(10)):
+    def research_run(request: Request, terms: int = Form(10)):
         terms = max(1, min(terms, 40))
-        return start("research", ["research", "--channel", channel.key, "--terms", str(terms)],
+        return start("research", ["research", "--channel", current(request).key, "--terms", str(terms)],
                      f"Recherche mit {terms} Suchbegriffen", to="/recherche")
 
     @app.post("/actions/research-patterns")
-    def research_patterns():
-        return start("research", ["research", "--channel", channel.key, "--analyze-reviews"],
+    def research_patterns(request: Request):
+        return start("research", ["research", "--channel", current(request).key, "--analyze-reviews"],
                      "Muster-Auswertung", to="/recherche")
 
     @app.get("/einstellungen")
     def einstellungen(request: Request, msg: str = "", err: str = ""):
-        return settings_page(request, load_schedule(db(), channel), msg, err)
+        return settings_page(request, load_schedule(db(), current(request)), msg, err)
 
     # Alte Adressen (Lesezeichen, Telegram-Links) leiten weiter
     @app.get("/settings")
@@ -574,6 +616,7 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
     async def settings_save(request: Request):
         form = await request.form()
         d = db()
+        channel = current(request)
         sched = load_schedule(d, channel)
         sched["pipeline"] = {
             "enabled": form.get("pipeline_enabled") == "on",
@@ -593,7 +636,7 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         problems = save_schedule(d, channel, sched)
         if problems:
             return settings_page(request, sched, err=" ".join(problems))
-        scheduler.apply()
+        schedulers[channel.key].apply()
         return back(msg="Zeitplan gespeichert", to="/einstellungen")
 
     @app.post("/settings/password")

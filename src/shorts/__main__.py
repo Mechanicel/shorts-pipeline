@@ -71,7 +71,9 @@ def cmd_pipeline(args, settings) -> int:
     if args.limit:  # z. B. Testlauf mit genau einem Video; bis zu 4 Claude-Aufrufe je Video
         channel = replace(channel, max_videos_per_run=args.limit,
                           max_new_topics_per_run=min(channel.max_new_topics_per_run, args.limit * 4))
-    report = Pipeline(settings, channel, db, dry_run=args.dry_run).run()
+    pipe = Pipeline(settings, channel, db, dry_run=args.dry_run)
+    pipe.style_pick = args.style if args.style in ("v2", "v3") else None
+    report = pipe.run()
     for v in report.videos:  # relativer Pfad statt Container-Pfad; "#ID" verlinkt das Webinterface
         rel = v.relative_to(settings.root) if v.is_relative_to(settings.root) else v
         print(f"Video #{int(v.parent.name)} fertig: {rel}")
@@ -115,7 +117,7 @@ def cmd_regenerate(args, settings) -> int:
     from .actions import regenerate
 
     try:
-        regenerate(settings, _db(settings, False), args.topic_id)
+        regenerate(settings, _db(settings, False), args.topic_id, style_pick=args.style)
     except ValueError as exc:
         print(exc)
         return 1
@@ -434,6 +436,8 @@ def main(argv: list[str] | None = None) -> int:
 
     sp = add("pipeline", cmd_pipeline, "Quellen abrufen, Skripte schreiben, Videos rendern", dry=True)
     sp.add_argument("--limit", type=int, default=0, help="max. Anzahl Videos in diesem Lauf")
+    sp.add_argument("--style", choices=["auto", "v2", "v3"], default="auto",
+                    help="Stil für alle Videos dieses Laufs (auto = STYLE_MODE aus .env)")
     add("collect", cmd_collect, "nur Quellen abrufen")
     add("status", cmd_status, "Anzahl Themen je Status", dry=True)
     sp = add("upload", cmd_upload, "fällige Videos: Upload-Paket an Telegram (manual) bzw. YouTube-Upload (api)",
@@ -467,6 +471,7 @@ def main(argv: list[str] | None = None) -> int:
     add("web-reset-password", cmd_web_reset_password, "Webinterface-Passwort zurücksetzen", channel=False)
     sp = add("regenerate", cmd_regenerate, "Thema mit neuem Skript + Video neu einreihen", channel=False)
     sp.add_argument("topic_id", type=int)
+    sp.add_argument("--style", choices=["v2", "v3"], help="beim Neuerzeugen diesen Stil verwenden")
     add("auth-check", cmd_auth_check, "YouTube-Token prüfen (ohne Quota)")
     add("refresh-dates", cmd_refresh_dates, "fehlende Quelldaten offener Themen nachtragen")
     sp = add("retry", cmd_retry, "Thema im Status 'fehler' erneut einreihen", channel=False)

@@ -37,6 +37,9 @@
   .count { font:500 12px/16px var(--mono); padding:0 6px; border-radius:var(--r-sm); background:var(--navy); color:#fff; }
   .count.bad { background:var(--bad); } .count.live { background:var(--marker); color:var(--navy); }
   .topbar form { margin-left:auto; }
+  .topbar form.switch { margin-left:0; }
+  .switch select { font-weight:600; font-size:16px; color:var(--navy); border-color:transparent; background-color:transparent; padding:6px 8px; margin-left:-8px; max-width:280px; }
+  .switch select:hover { border-color:var(--line-strong); }
 
   main { max-width:1280px; margin:0 auto; padding:24px 32px 64px; }
   .page-head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:24px; }
@@ -138,7 +141,7 @@
   @media (max-width:900px) { .tiles { grid-template-columns:repeat(2,1fr); } }
   @media (max-width:720px) {
     .topbar-inner { padding:0 16px; gap:16px; height:auto; min-height:56px; flex-wrap:wrap; }
-    .brand { padding-top:16px; } .topbar form { margin-left:auto; padding-top:12px; }
+    .brand { padding-top:16px; } .topbar form { margin-left:auto; padding-top:12px; } .topbar form.switch { margin-left:0; }
     .nav { width:100%; height:44px; order:3; margin:0 -16px; padding:0 8px; width:calc(100% + 32px); }
     main { padding:16px 16px 64px; }
     .tiles { grid-template-columns:1fr 1fr; gap:12px; } .tile { padding:12px 16px; } .tile .figure { font-size:24px; line-height:32px; }
@@ -158,7 +161,16 @@
 <body>
 {% block header %}
 <header class="topbar"><div class="topbar-inner">
-  <a class="brand" href="/">{{ channel.name }}</a>
+  {% if channels and channels|length > 1 %}
+  <form method="post" action="/kanal" class="switch">
+    <input type="hidden" name="next" value="{{ path }}">
+    <label for="kanal" class="sr-only">Kanal</label>
+    <select name="key" id="kanal" onchange="this.form.submit()">{% for key, ch in channels.items() %}
+      <option value="{{ key }}" {{ "selected" if key == channel.key }}>{{ ch.name }}{% if others_waiting and others_waiting.get(key) %} · {{ others_waiting[key] }} warten{% endif %}</option>{% endfor %}
+    </select>
+    <noscript><button class="secondary small">Wechseln</button></noscript>
+  </form>
+  {% else %}<a class="brand" href="/">{{ channel.name }}</a>{% endif %}
   <nav class="nav" aria-label="Hauptnavigation">
     {% set items = [("/", "Heute"), ("/freigabe", "Freigabe"), ("/videos", "Videos"), ("/statistik", "Statistik"), ("/recherche", "Recherche"), ("/jobs", "Jobs"), ("/einstellungen", "Einstellungen")] %}
     {% for href, label in items %}

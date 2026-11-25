@@ -50,7 +50,11 @@
     <div class="row" style="margin-top:16px">
       <form method="post" action="/topics/{{ t.id }}/approve"><button class="ok">Freigeben</button></form>
       <form method="post" action="/topics/{{ t.id }}/reject"><button class="danger">Ablehnen</button></form>
-      <form method="post" action="/topics/{{ t.id }}/regenerate"><button class="secondary">Neu erzeugen</button></form>
+      <form method="post" action="/topics/{{ t.id }}/regenerate" class="row">
+        <label for="style-{{ t.id }}" class="sr-only">Stil beim Neuerzeugen</label>
+        <select name="style" id="style-{{ t.id }}">{% for key, label in style_choices.items() %}<option value="{{ key }}">{{ "Automatisch" if key == "auto" else label }}</option>{% endfor %}</select>
+        <button class="secondary">Neu erzeugen</button>
+      </form>
     </div>
   </div>
 </article>

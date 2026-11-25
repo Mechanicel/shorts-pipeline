@@ -157,3 +157,36 @@ def test_kopfzeile_neu_ohne_aenderung_wird_gewarnt() -> None:
     warns = status_warnings(items, "AB 1. JANUAR 2027 GILT NEU")
     assert any("Bußgeld" in w for w in warns)
     assert status_warnings(items, "MINDESTLOHN: DAS GILT") == []
+
+
+def test_stil_von_hand_fuer_den_lauf_wird_am_thema_gemerkt(tmp_path) -> None:
+    settings = replace(Settings(), data_dir=tmp_path, output_dir=tmp_path / "out", telegram_bot_token=None,
+                       telegram_chat_id=None, style_mode="alternate")
+    ch = replace(load_channels()["de"], max_videos_per_run=2, max_new_topics_per_run=2)
+    db = Database(tmp_path / "p.sqlite3")
+    today = datetime.now(timezone.utc).isoformat()
+    ids = [db.add_topic("de", f"https://bund.de/{i}", "Q", f"Thema {i}", published_at=today) for i in range(2)]
+    for tid in ids:
+        db.update_fields(tid, source_text=sample_data.SAMPLE_SOURCE_TEXT, triage="ok: x")
+    db.update_fields(ids[1], style_pick="v2")  # beim Neuerzeugen gewählt → hat Vorrang vor dem Lauf
+
+    class NoTriage:
+        spent: list = []
+
+        def screen(self, c, covered="(none)"):
+            return {}
+    pipe = Pipeline(settings, ch, db, writer=Writer(), tts=EspeakTTS(), triage=NoTriage())
+    pipe.style_pick = "v3"
+    pipe.step_script(RunReport())
+    assert (db.get(ids[0]).style, db.get(ids[0]).style_pick) == (STYLE_V3, "v3")
+    assert (db.get(ids[1]).style, db.get(ids[1]).style_pick) == (STYLE_V2, "v2")
+
+
+def test_neu_erzeugen_mit_stil() -> None:
+    db = Database(":memory:")
+    tid = db.add_topic("de", "https://a.de/x", "Q", "X")
+    db.transition(tid, Status.SKRIPT, script_json="{}")
+    db.transition(tid, Status.FEHLER)
+    assert db.regenerate(tid, style_pick="v3").style_pick == "v3"
+    db.transition(tid, Status.FEHLER)
+    assert db.regenerate(tid).style_pick is None  # ohne Wahl wieder automatisch

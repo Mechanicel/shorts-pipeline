@@ -26,13 +26,17 @@ Sperre nach 5 Fehlversuchen. Passwort vergessen: `docker compose run --rm job we
 
 | Seite | Wofür |
 |---|---|
-| **Heute** | Kennzahlen (wartet, Vorrat, Aufrufe 7 Tage, Kosten), „Braucht dich“ (Fehler, Fristen, Vorrat), nächste 7 Termine, Videos erstellen |
-| **Freigabe** | Video, Tafel (v3), Skript, Belege, Warnungen ansehen; Freigeben / Ablehnen / Neu erzeugen; freigegebene Videos hochladen |
+| **Heute** | Kennzahlen (wartet, Vorrat, Aufrufe 7 Tage, Kosten), „Braucht dich“ (Fehler, Fristen, Vorrat), nächste 7 Termine, Videos erstellen (Anzahl und Stil: abwechselnd, v2 oder v3) |
+| **Freigabe** | Video, Tafel (v3), Skript, Belege, Warnungen ansehen; Freigeben / Ablehnen / Neu erzeugen (wahlweise als v2 oder v3); freigegebene Videos hochladen |
 | **Videos** | Geplant · Öffentlich · Abgelehnt/Verworfen · Gelöscht, Klick auf eine Zeile zeigt alle Details und Links |
 | **Statistik** | Stil-Vergleich v1/v2/v3, Diagramm „angesehen vs. weggewischt“, Werte aus YouTube Studio gesammelt eintragen |
 | **Recherche** | Ausreißer-Recherche starten, Treffer ansehen und die ersten 3 Sekunden sichten |
 | **Jobs** | Protokoll aller Läufe mit Filter und Logs |
 | **Einstellungen** | Zeitplan für Erstellen und Upload, Veröffentlichungstermine, Passwort |
+
+**Mehrere Kanäle:** Gibt es in `config/channels.yaml` mehr als einen Kanal, wird der Kanalname oben links zum
+Umschalter. Alle Seiten, Aktionen und der Zeitplan beziehen sich dann auf den gewählten Kanal; der Umschalter zeigt,
+wenn in einem anderen Kanal Videos auf Freigabe warten. Mit nur einem Kanal bleibt er ausgeblendet.
 
 Der Zeitplan läuft im Web-Dienst (APScheduler). Port 8080 nicht ins
 Internet freigeben. Gestaltungsregeln: `docs/ui/DESIGN.md`, Screenshots und Prüfung: `./deploy/ui_check.sh`.
@@ -163,7 +167,13 @@ Der Bot läuft per `restart: unless-stopped` dauerhaft (`docker compose up -d bo
 - `.env` – Keys, Modell (`ANTHROPIC_MODEL`), Stimme/Tempo (`OPENAI_TTS_VOICE`, `TTS_SPEED`), `UPLOAD_MODE`,
   Pixabay, Telegram, Quota-Limits, Kostensätze. Vorlage: `.env.example`.
 - `config/channels.yaml` – pro Kanal: Quellen, Sprache, Sprechanweisung, Hashtags, Termine, Limits,
-  Pixabay-Suchbegriffe. Neuer Kanal = neuer Eintrag + `credentials/token_<key>.json`.
+  Pixabay-Suchbegriffe. Neuer Kanal: Eintrag anlegen (Schlüssel z. B. `en`), Token mit
+  `py auth_youtube.py --channel en …` erzeugen (beim Google-Login den neuen YouTube-Kanal wählen) und als
+  `credentials/token_en.json` ablegen, dann `docker compose restart web bot`. Alle Kanäle teilen sich das
+  Google-Cloud-Projekt und damit das Upload-Kontingent.
+- Stil: `STYLE_MODE` (`alternate`/`v2`/`v3`) gilt für Zeitplan-Läufe; im Web und per
+  `pipeline --style v2|v3` bzw. `regenerate <id> --style v2|v3` lässt er sich je Lauf oder Thema festlegen.
+  Von Hand gewählte Stile stehen in `topics.style_pick` (Hinweis auf der Detailseite).
 
 ## Projektstruktur
 
