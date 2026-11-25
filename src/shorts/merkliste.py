@@ -107,6 +107,9 @@ list_possible=false with a short reason and leave the rest minimal – the topic
 Board:
 - headline: max. 32 characters, the date or the topic, e.g. "AB 1. JANUAR 2027 GILT NEU", "DAS ÄNDERT SICH BEIM \
 KINDERGELD".
+- Every item must fit the headline. Under a headline about a date or "what changes" ("AB 1. JANUAR 2027 GILT \
+NEU", "DAS ÄNDERT SICH …"), list only changes that take effect then – never pad the list with rules that are \
+already in force or unchanged. If that leaves fewer than 3 items, set list_possible=false.
 - items: 3–6. label max. 28 chars, old_value max. 14 (empty if the source names none), new_value max. 16, note \
 max. 40 (optional, empty otherwise). Values use digits and units exactly as in the source ("14,60 €", "556 €").
 - icon: pick the best fitting name from the allowed list.
@@ -175,9 +178,13 @@ def cta_problems(cta: str) -> list[str]:
     return problems
 
 
-def status_warnings(items: list[dict]) -> list[str]:
+def status_warnings(items: list[dict], headline: str = "") -> list[str]:
     """Status, der nicht eindeutig zum Beleg passt (Faktencheck-Hinweis in Freigabe und Telegram)."""
     out = []
+    if re.search(r"\bneu\b|ändert|ab \d", headline, re.IGNORECASE):
+        unchanged = [it.get("label", "") for it in items if it.get("status") == "in Kraft" and not it.get("old_value")]
+        if unchanged:
+            out.append("Kopfzeile verspricht Neues, aber ohne alten Wert und schon in Kraft: " + ", ".join(unchanged))
     for i, it in enumerate(items, 1):
         quote, status = it.get("evidence", ""), it.get("status", "")
         if status in ("in Kraft", "beschlossen") and _STATUS_PLAN.search(quote):
@@ -261,7 +268,8 @@ def layout(script: dict) -> tuple[list[Block], list[str]]:
     y = TOP + 50
     inner = CONTENT_X1 - CONTENT_X0
 
-    head = _fit_size(script.get("headline", "").upper(), FONT_BLACK, 68, inner, 2)
+    head = _fit_size(script.get("headline", "").upper(), FONT_BLACK, 68, inner, 1) or \
+        _fit_size(script.get("headline", "").upper(), FONT_BLACK, 60, inner, 2)
     if head is None:
         problems.append("headline passt nicht in 2 Zeilen (min. 42 px).")
         head = (MIN_FONT, [script.get("headline", "").upper()])
@@ -291,12 +299,12 @@ def layout(script: dict) -> tuple[list[Block], list[str]]:
             problems.append(f"Punkt {i}: alter und neuer Wert passen nicht in eine Zeile.")
         # Status-Chip: hinter die Werte, sonst hinter das Label, sonst in eine eigene Zeile
         chip = "values" if values_w + chip_w + 24 <= text_w else ("label" if label_w + chip_w + 24 <= text_w else "own")
-        h = 18 + int(label[0] * 1.2) + 8 + 70 + (70 if chip == "own" else 0) + len(note_lines) * 52 + 18
+        h = 12 + int(label[0] * 1.2) + 6 + 70 + (68 if chip == "own" else 0) + len(note_lines) * 52 + 10
         blocks.append(Block("item", y, h, {"label": label, "notes": note_lines, "item": it, "index": i - 1,
                                            "chip": chip}))
-        y += h + 10
+        y += h + 6
 
-    y += 16
+    y += 12
     cta_lines = _wrap(script.get("cta", ""), _font(FONT_XBOLD, MIN_FONT + 2), inner)
     if len(cta_lines) > 3:
         problems.append("cta braucht mehr als 3 Zeilen.")
@@ -306,7 +314,9 @@ def layout(script: dict) -> tuple[list[Block], list[str]]:
     blocks.append(Block("source", y, 52, {"text": script.get("source_label", "")}))
     y += 52 + 40
     if y > BOTTOM:
-        problems.append(f"Tafel zu hoch ({y - TOP} px, verfügbar {BOTTOM - TOP} px) – weniger Punkte oder kürzere Texte.")
+        problems.append(f"Tafel um {y - BOTTOM} px zu hoch ({y - TOP} von {BOTTOM - TOP} px). Platzbedarf: Punkt ohne "
+                        "Notiz ca. 150 px, jede Notizzeile 52 px, Status in eigener Zeile 68 px (passiert bei langen "
+                        "Werten), CTA-Zeile 54 px – Notizen streichen, Werte kürzen oder einen Punkt weglassen.")
     return blocks, problems
 
 
@@ -377,13 +387,13 @@ def render_board(script: dict, background: Image.Image, out: Path, highlight: in
             else:
                 d.line([CONTENT_X0, b.y + b.h + 5, CONTENT_X1, b.y + b.h + 5], fill=(255, 255, 255, 40), width=2)
             code = ICONS.get(it.get("icon", ""), ICONS["info"])
-            d.text((CONTENT_X0 + 30, b.y + 18 + 30), chr(code), font=icon_font, fill=YELLOW, anchor="mm")
+            d.text((CONTENT_X0 + 30, b.y + 12 + 30), chr(code), font=icon_font, fill=YELLOW, anchor="mm")
             x = CONTENT_X0 + ICON_COL
             size, lines = b.data["label"]
-            yy = b.y + 18
+            yy = b.y + 12
             d.text((x, yy), lines[0], font=_font(FONT_XBOLD, size), fill=WHITE)
             label_y = yy - 4
-            yy += int(size * 1.2) + 8
+            yy += int(size * 1.2) + 6
             f_old, f_new = _font(FONT_XBOLD, 44), _font(FONT_BLACK, 56)
             vx = x
             if it.get("old_value"):
@@ -404,7 +414,7 @@ def render_board(script: dict, background: Image.Image, out: Path, highlight: in
                                 fill=STATUS_COLORS.get(status, (120, 132, 150)) + (255,))
             d.text((cx0 + cw / 2, cy + 30), status, font=chip_font, fill=STATUS_TEXT.get(status, WHITE), anchor="mm")
             if b.data["chip"] == "own":
-                yy += 70
+                yy += 68
             for line in b.data["notes"]:
                 d.text((x, yy), line, font=_font(FONT_XBOLD, MIN_FONT), fill=(200, 208, 222))
                 yy += 52

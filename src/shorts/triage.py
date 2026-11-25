@@ -133,7 +133,7 @@ class HaikuTriage:
 
         if not settings.anthropic_api_key:
             raise RuntimeError("ANTHROPIC_API_KEY fehlt in .env")
-        self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key, max_retries=3)
+        self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key, max_retries=3, timeout=240)  # hängende Verbindung nach 4 min abbrechen + neu versuchen
         self._model = settings.anthropic_triage_model
         self._system = SYSTEM.format(channel=channel.name, locale=channel.locale_hint or channel.language)
         self.spent: list[float | None] = []

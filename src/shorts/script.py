@@ -217,7 +217,7 @@ class ClaudeScriptWriter:
 
         if not settings.anthropic_api_key:
             raise RuntimeError("ANTHROPIC_API_KEY fehlt in .env")
-        self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key, max_retries=3)
+        self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key, max_retries=3, timeout=240)  # hängende Verbindung nach 4 min abbrechen + neu versuchen
         self._model = settings.anthropic_model
         self._effort = settings.anthropic_effort
         self._channel = channel
@@ -289,13 +289,17 @@ class ClaudeScriptWriter:
                                     source_date=source_date, today=today or date.today().isoformat(), covered=covered)
         script = self._call(user, MerklisteScript, system)
         problems = validate_v3(script)
-        if problems:
+        for _ in range(2):  # bis zu zwei Korrekturversuche (Tafel muss auf den Bildschirm passen)
+            if not problems:
+                break
             log.info("Merkliste wird nachgebessert: %s", problems)
-            script = self._call(user + "\n\nA previous attempt had these problems, fix them (shorter texts or fewer "
-                                "items if the board does not fit): " + " ".join(problems), MerklisteScript, system)
+            previous = json.dumps(script.model_dump(), ensure_ascii=False)
+            script = self._call(user + "\n\nYOUR PREVIOUS ATTEMPT:\n" + previous + "\n\nIt had these problems, fix them "
+                                "(keep the facts, shorten texts or drop the least important item): " + " ".join(problems),
+                                MerklisteScript, system)
             problems = validate_v3(script)
-            if problems:
-                raise RuntimeError("Merkliste ungültig: " + " ".join(problems))
+        if problems:
+            raise RuntimeError("Merkliste ungültig: " + " ".join(problems))
         return script
 
 

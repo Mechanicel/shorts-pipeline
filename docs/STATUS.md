@@ -2,6 +2,22 @@
 
 Stand: 25.11.2026, geprüft an Code, git, SQLite-DB, Docker und Job-Logs auf dem Server. Kanal: „Was ändert sich für dich?“ (DE).
 
+## Nachtrag 25.11.2026 nachmittags (nach diesem Bericht umgesetzt)
+
+| Thema | Stand | Commit |
+|---|---|---|
+| Fristen bei der Terminvergabe | Video mit Frist/Stichtag erscheint ≥ 3 Tage vorher; sonst nicht eingeplant, „sofort“ wird vorgeschlagen (Web vorausgewählt, Telegram-Warnung) | d36fbb9 |
+| Vorrats-Warnung | täglich 12:00 mit check-public: < 3 Tage geplant → Telegram mit Anzahl und letztem Termin | d36fbb9 |
+| Ausreißer-Recherche | `research` (Data API, `YT_API_KEY`), Mindest-Median 300, Haiku sortiert Politik/Satire aus, Seite „Recherche“ mit Sichtung | b1a419d, 7c1f9d0 |
+| **Stil v3 „Merkliste“** | Infotafel mit 3–6 Punkten (alt → neu, Status-Chip, Beleg), 8–12 s, CTA, ab Frame 0 sichtbar; Layout-Prüfung mit bis zu 2 Korrekturen | 6e8ca28 |
+| Vergleich v2/v3 | `STYLE_MODE=alternate` (Standard), Stil in `topics.style`, Tabelle „Stil-Vergleich“ (Videos, Ø Aufrufe nach 72 h, Ø Länge) | 6e8ca28 |
+| Analytics API | `analytics` + täglich: views, engagedViews, Ø-Dauer, Ø-%, Likes, Kommentare, Shares. „Angesehen vs. weggewischt“ ist nicht in der API → Eingabefeld pro Video. **Token mit Analytics-Scope steht noch aus.** | 6e8ca28 |
+| Quellen | neu: Bundesregierung – Neuregelungen (Monatsübersichten); deaktiviert: Pressemitteilungen, BMF, BNetzA | 6e8ca28 |
+| Vorschau | `preview <URL>` erzeugt v2 und v3 ohne Upload/echte DB; erste Vorschau: Altersvorsorgedepot ab 2027 | dieser Commit |
+
+Die Abschnitte 4–8 unten beschreiben den Stand vor diesen Änderungen (v2-Prompt wörtlich, Zahlen vom Vormittag).
+Der v3-Prompt steht in `src/shorts/merkliste.py` (`V3_SYSTEM`).
+
 ## 1. Kurzfazit
 
 Die Pipeline läuft durch: Quellen → Vorauswahl → Skript (Opus) → Stimme → Video → Freigabe → YouTube-Upload mit Termin. Bisher sind 22 Videos hochgeladen, davon 10 öffentlich, 6 geplant und 6 gelöscht (Dubletten bzw. veraltet). Automatisch läuft derzeit nur die tägliche Sichtbarkeitsprüfung. Erstellen und Hochladen startet der Betreiber von Hand im Webinterface, weil die Zeitpläne für Erstellen und Upload aus sind. Das größte inhaltliche Problem ist die Zuschauerbindung: Laut Studio sahen bei den ersten 8 Shorts nur 14–29 % hin, statt wegzuwischen. Seit 22.11. wird die Gestaltung v2 dagegen getestet (Hook-Tafel ab Frame 0), Auswertung steht aus. Das größte praktische Risiko: Der Vorrat an geplanten Videos reicht nur bis 30.11.

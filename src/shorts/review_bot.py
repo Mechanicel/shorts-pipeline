@@ -70,7 +70,7 @@ def _format_review_v3(topic: Topic, s: dict, eur_per_usd: float) -> str:
     lines += ["", f"📣 {s.get('cta', '')}", f"Hintergrund: {s.get('background_query', '')}"]
     if dl := deadline_of(s, date.today()):
         lines.append(f"⏰ {dl.kind} {dl.day:%d.%m.%Y} – spätestens {dl.latest_publish_day:%d.%m.} veröffentlichen")
-    warnings = status_warnings(s.get("items", []))
+    warnings = status_warnings(s.get("items", []), s.get("headline", ""))
     if topic.note or warnings:
         lines += [""] + [f"⚠️ {w}" for w in warnings] + ([f"⚠️ {topic.note}"] if topic.note else [])
     lines += ["", f"💶 Kosten: {format_cost(topic.cost_json, eur_per_usd)}"]

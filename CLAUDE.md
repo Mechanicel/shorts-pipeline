@@ -43,6 +43,9 @@ eigenen Quellen → neuer Eintrag in `config/channels.yaml`, eigene `credentials
 | `manual.py` | **Standard (`UPLOAD_MODE=manual`)**: Termin je freigegebenem Video (gleiche Slot-Logik), am Termin-Tag Upload-Paket an Telegram (MP4 als Dokument, Titel, Beschreibung inkl. Pixabay-Credit, Tags, Termin + Button `up:<id>`), Status `paket_gesendet` → Button → `hochgeladen` |
 | `upload.py` | YouTube Data API v3, privat + `publishAt` auf `publish_slots` (Berlin) verteilt oder `--sofort`; Googles `quotaExceeded`/`uploadLimitExceeded` stoppen den Batch (Sperre bis Mitternacht PT), keine eigene Vorab-Rechnung; Token-Refresh schreibt `credentials/token_<key>.json` zurück |
 | `research.py` | Ausreißer-Recherche (CLI `research`, Seite „Recherche“): Shorts kleiner DE-Kanäle über die Data API (`YT_API_KEY`, kein OAuth, kein Scraping), Score = Aufrufe / Median der letzten 20 Uploads, Tabellen `research_*`, Auswertung mit Sonnet 5.5, Bericht + CSV in `docs/research/`, manuelle Sichtung im Web. Konfiguration `config/research.yaml` |
+| `merkliste.py` | **Stil v3 „Merkliste“**: Skriptmodell (headline, 3–6 Punkte mit Icon/alt→neu/Status/Beleg, CTA „Schick das jemandem, der …“), Prompt, Prüfungen (Textlängen, Layout passt auf die Tafel, 18–28 Wörter, Status vs. Beleg, Kopfzeile „neu“ nur mit echten Änderungen), Tafel 1080×1920 (min. 42 px, Lucide-Icons ISC in `assets/icons/`), 8–12 s, statischer unscharfer Hintergrund (Pixabay-Foto zum Suchbegriff von Claude, sonst Navy-Verlauf) → exakter Loop |
+| `deadline.py` | Fristen/Stichtage aus `date_label` → Video erscheint ≥ 3 Tage vorher, sonst nicht eingeplant + „sofort“ vorgeschlagen; Vorrats-Prüfung (< 3 Tage geplant → Telegram, täglich mit check-public) |
+| `analytics.py` | YouTube Analytics API (`yt-analytics.readonly`, Token mit beiden Scopes via `auth_youtube.py`): täglich views/engagedViews/Ø-Dauer/Ø-%/Likes/Kommentare/Shares in `yt_stats`, Aufrufe nach 72 h in `topics.yt_views_72h`, Stil-Vergleich im Dashboard. „Angesehen vs. weggewischt“ liefert die API NICHT → Eingabefeld (`topics.yt_viewed_rate`) |
 | `actions.py` | Freigeben/Ablehnen/`regenerate` für Bot, CLI und Web (entfernt alte Telegram-Buttons) |
 | `publiccheck.py` | `check-public`: Sichtbarkeit von außen (oEmbed + playabilityStatus) |
 | `web/` | Webinterface (FastAPI, Port 8080, Dienst `web`): Passwort beim ersten Start (scrypt, Tabelle `app_settings`), signierte Cookies, Login-Sperre; Übersicht/Freigabe/Upload/Logs; **Zeitplan** (APScheduler, `schedule_<kanal>` in `app_settings`, Standard aus) startet CLI-Jobs als Subprozess (`job_runs`-Tabelle, Logs in `data/logs/`) |
@@ -133,6 +136,13 @@ melden einmal, manuell geht weiter). Rate-Limits/5xx: 3 Versuche mit Backoff. Ei
 (`upload_counts`, `YT_UPLOADS_PER_DAY`) nur zur Anzeige. Termin wird erst nach erfolgreichem Upload gespeichert.
 
 **Webinterface:** läuft (`docker compose up -d web`), Passwort legt der Betreiber beim ersten Aufruf fest.
+
+**Stil v3 / Vergleich (seit 25.11.):** `STYLE_MODE=alternate` (Standard) gibt dem selteneren Stil den Vorzug →
+v2 und v3 gleich oft, an wechselnden Wochentagen; Stil in `topics.style`. v3 nicht möglich (< 3 listenfähige
+Fakten oder nur alte Regeln) → Grund in der Notiz, Thema läuft als v2. Vorschau ohne Upload/echte DB:
+`docker compose run --rm job preview <URL> [--only v2|v3]` → Telegram. Anthropic-Clients mit `timeout=240`
+(eine hängende Verbindung blockierte sonst 10 min). Quellen: „Bundesregierung – Neuregelungen“ (Hub-Seite der
+Monatsübersichten) neu; Pressemitteilungen, BMF, BNetzA mit `enabled: false` (0 Videos aus 57 Themen).
 
 **Ausreißer-Recherche (seit 25.11.):** `docker compose run --rm job research --terms 10`. Nur Data API v3 mit
 `YT_API_KEY`; max. 40 search-Aufrufe/Lauf; Kanal-Median 7 Tage gecacht; jeder Lauf schreibt Snapshots (Wachstum).

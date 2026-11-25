@@ -103,7 +103,7 @@ def warning_badges(topic, today=None) -> list[str]:
     narration = script.get("narration", "")
     if script.get("style") == "v3-merkliste":
         from ..merkliste import status_warnings
-        if status_warnings(script.get("items", [])):
+        if status_warnings(script.get("items", []), script.get("headline", "")):
             badges.append("Status nicht eindeutig belegt")
     elif topic.source_text and _PLAN_WORDS.search(topic.source_text) and not _HEDGE_WORDS.search(narration):
         badges.append("Rechtsstatus prüfen: Quelle spricht von Plan/Entwurf")

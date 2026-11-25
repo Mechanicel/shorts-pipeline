@@ -43,7 +43,7 @@ def test_layout_pruefung_erkennt_ueberlauf() -> None:
     items = v3()["items"]
     full = [dict(items[0], label=f"Sehr lange Bezeichnung {i}", note="Zusatz mit sehr vielen Wörtern am Ende hier")
             for i in range(6)]
-    assert any("Tafel zu hoch" in p for p in layout_problems(v3(items=full)))
+    assert any("zu hoch" in p for p in layout_problems(v3(items=full)))
     wide = [dict(items[0], old_value="1.234.567,89 €", new_value="9.876.543,21 €")] + items[1:]
     assert any("Wert" in p for p in layout_problems(v3(items=wide)))
 
@@ -149,3 +149,11 @@ def test_ohne_listenfaehige_fakten_als_v2(tmp_path) -> None:
     t = db.get(ids[0])
     assert writer.calls == ["v3", "v2"] and t.style == STYLE_V2
     assert t.note.startswith("v3 nicht möglich: nur eine Zahl im Text")
+
+
+def test_kopfzeile_neu_ohne_aenderung_wird_gewarnt() -> None:
+    items = [{"label": "Mindestlohn", "status": "beschlossen", "old_value": "13,90 €", "evidence": "x"},
+             {"label": "Bußgeld", "status": "in Kraft", "old_value": "", "evidence": "x"}]
+    warns = status_warnings(items, "AB 1. JANUAR 2027 GILT NEU")
+    assert any("Bußgeld" in w for w in warns)
+    assert status_warnings(items, "MINDESTLOHN: DAS GILT") == []

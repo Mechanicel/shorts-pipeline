@@ -296,6 +296,75 @@ def cmd_research(args, settings) -> int:
     return 0
 
 
+def cmd_preview(args, settings) -> int:
+    """Beide Fassungen (v2 und v3) eines Artikels nur als Vorschau: eigene In-Memory-DB, eigener Ausgabeordner,
+    nichts wird hochgeladen oder in die echte Datenbank geschrieben. Ergebnis per Telegram."""
+    import re as _re
+
+    import httpx
+
+    from .pipeline import Pipeline, RunReport
+    from .result import ERROR, OK, report
+    from .sources import fetch_article
+
+    ch = get_channel(args.channel)
+    article = fetch_article(args.url)
+    if not article.text:
+        report(ERROR, "Kein Artikeltext gefunden.")
+        return 1
+    slug = _re.sub(r"[^a-z0-9]+", "-", args.url.lower().rstrip("/").split("/")[-1])[:40]
+    out_root = settings.output_dir / "preview" / slug
+    results = {}
+    for style in (args.only,) if args.only else ("v2", "v3"):
+        st = replace(settings, style_mode=style, output_dir=out_root / style)
+        mem = Database(":memory:")
+        tid = mem.add_topic(ch.key, args.url, args.source or "Vorschau", args.title or args.url,
+                            published_at=article.date)
+        mem.update_fields(tid, source_text=article.text, triage="ok: Vorschau")
+        pipe = Pipeline(st, replace(ch, max_videos_per_run=1, max_new_topics_per_run=1), mem)
+        pipe.skip_age_check = True  # Vorschau: auch ältere Übersichtsseiten erlaubt
+        report_ = RunReport()
+        try:
+            pipe._script_one(mem.get(tid), report_)
+        except Exception as exc:
+            results[style] = (None, f"{style}: Skript fehlgeschlagen ({type(exc).__name__}: {exc})"[:900])
+            continue
+        t = mem.get(tid)
+        if t.status != Status.SKRIPT:
+            results[style] = (None, f"{style}: kein Skript ({t.note})")
+            continue
+        try:
+            path = pipe._render_one(t)
+        except Exception as exc:
+            results[style] = (None, f"{style}: Render fehlgeschlagen ({type(exc).__name__}: {exc})")
+            continue
+        s = mem.get(tid).script or {}
+        results[style] = (path, f"{style} · {s.get('style')} · {s.get('title')}\n{s.get('narration')}"
+                          + (f"\n⚠️ {mem.get(tid).note}" if mem.get(tid).note else ""))
+        print(f"{style}: {path}")
+    if settings.telegram_bot_token and settings.telegram_chat_id:
+        api = f"https://api.telegram.org/bot{settings.telegram_bot_token}"
+        for style, (path, text) in results.items():
+            if path is None:
+                httpx.post(f"{api}/sendMessage", data={"chat_id": settings.telegram_chat_id,
+                                                       "text": f"VORSCHAU {text}"}, timeout=30)
+                continue
+            with open(path, "rb") as fh:
+                httpx.post(f"{api}/sendVideo", data={"chat_id": settings.telegram_chat_id,
+                                                     "caption": f"VORSCHAU (wird nicht hochgeladen)\n{text}"[:1000],
+                                                     "supports_streaming": "true"},
+                           files={"video": (f"vorschau_{style}.mp4", fh, "video/mp4")}, timeout=180)
+            board = path.parent / "board.png"
+            if board.exists():
+                with open(board, "rb") as fh:
+                    httpx.post(f"{api}/sendPhoto", data={"chat_id": settings.telegram_chat_id,
+                                                         "caption": "Tafel v3 in voller Auflösung"},
+                               files={"photo": ("tafel.png", fh, "image/png")}, timeout=60)
+    ok = [s for s, (p, _) in results.items() if p]
+    report(OK if len(ok) == len(results) else ERROR, f"Vorschau: {', '.join(ok) or 'keine'} erstellt ({out_root})")
+    return 0 if ok else 1
+
+
 def cmd_web(args, settings) -> int:
     from .web.app import run_web
 
@@ -383,6 +452,11 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--reanalyze", action="store_true",
                     help="gespeicherte Ausreißer neu filtern und auswerten (ohne search-Kontingent)")
     add("analytics", cmd_analytics, "YouTube-Statistiken pro Video abrufen (Analytics API)")
+    sp = add("preview", cmd_preview, "v2 und v3 eines Artikels als Vorschau (kein Upload, keine echte DB)")
+    sp.add_argument("url")
+    sp.add_argument("--title", default="")
+    sp.add_argument("--source", default="")
+    sp.add_argument("--only", choices=["v2", "v3"], help="nur eine Fassung erzeugen")
     add("bot", cmd_bot, "Telegram-Review-Bot (dauerhaft)", channel=False)
     sp = add("web", cmd_web, "Webinterface + Zeitplan (dauerhaft)", channel=False)
     sp.add_argument("--port", type=int, default=8080)

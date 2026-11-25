@@ -103,6 +103,7 @@ class Pipeline:
                                  else ClaudeScriptWriter(settings, channel))
         self.tts = tts or get_tts(settings, channel, dry_run=dry_run)
         self._run_cost = 0.0
+        self.skip_age_check = False  # nur für Vorschauen (preview): ältere Quellen zulassen
         self.triage = triage or (PassAllTriage() if dry_run else HaikuTriage(settings, channel))
 
     # ------------------------------------------------------------------ steps
@@ -201,7 +202,8 @@ class Pipeline:
             article = fetch_article(topic.url)
             text, date_str = text or article.text, date_str or article.date
             self.db.update_fields(topic.id, source_text=text, published_at=date_str)
-        if not self.dry_run and (problem := source_age_problem(date_str, datetime.now(timezone.utc))):
+        if not self.dry_run and not self.skip_age_check and (
+                problem := source_age_problem(date_str, datetime.now(timezone.utc))):
             self._discard(topic, report, problem.split(" (")[0], problem)  # vor Claude → kostet nichts
             return
         if len(text) < 300:
@@ -275,7 +277,7 @@ class Pipeline:
     def _save_v3(self, topic: Topic, merk, text: str, covered: list[tuple[int, dict]], report: RunReport) -> None:
         data = merk.model_dump()
         items = data["items"]
-        warnings = unverified_items(items, text) + status_warnings(items)
+        warnings = unverified_items(items, text) + status_warnings(items, data.get("headline", ""))
         if similar := similar_scripts(data, covered):
             titles = {tid: s.get("title", "") for tid, s in covered}
             warnings.append("Ähnliches Thema schon vorhanden: " + " | ".join(f"#{i} {titles[i]}" for i in similar))
