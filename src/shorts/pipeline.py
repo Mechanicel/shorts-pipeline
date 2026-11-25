@@ -140,6 +140,17 @@ class Pipeline:
         # Per 'regenerate' neu eingereihte Themen zuerst (prev_status gesetzt) – sie überspringen Filter/Vorauswahl
         queue = sorted(self.db.by_status(Status.NEU, self.ch.key), key=lambda t: t.prev_status is None)
 
+        # Stufe 0: Themen mit bekanntem, zu altem Quelldatum gleich aussortieren (spart auch die Vorauswahl)
+        now = datetime.now(timezone.utc)
+        fresh: list[Topic] = []
+        for t in queue:
+            if not self.dry_run and not t.prev_status and t.published_at and (
+                    problem := source_age_problem(t.published_at, now)):
+                self._discard(t, report, problem.split(" (")[0], problem)
+            else:
+                fresh.append(t)
+        queue = fresh
+
         # Stufe 1: Vorfilter (kostenlos)
         kept: list[Topic] = []
         for t in queue:
@@ -186,17 +197,19 @@ class Pipeline:
         for topic in ready:
             if budget_calls <= 0 or report.scripted >= target:
                 break
-            budget_calls -= 1
             report.checked += 1
             try:
-                self._script_one(topic, report)
+                if self._script_one(topic, report):  # nur echte Claude-Aufrufe zählen gegen das Budget
+                    budget_calls -= 1
             except Exception as exc:
+                budget_calls -= 1
                 self._fail(topic, "Skript", exc, report)
 
     def _covered(self, exclude: int | None = None) -> list[tuple[int, dict]]:
         return [(t.id, t.script or {}) for t in self.db.covered_topics(self.ch.key) if t.id != exclude]
 
-    def _script_one(self, topic: Topic, report: RunReport) -> None:
+    def _script_one(self, topic: Topic, report: RunReport) -> bool:
+        """Liefert True, wenn Claude aufgerufen wurde (kostenlose Verwerfungen zählen nicht gegen das Budget)."""
         text, date_str = topic.source_text, topic.published_at
         if not text or (not date_str and not self.dry_run):  # Datum notfalls von der Artikelseite (z. B. VZ)
             article = fetch_article(topic.url)
@@ -205,11 +218,11 @@ class Pipeline:
         if not self.dry_run and not self.skip_age_check and (
                 problem := source_age_problem(date_str, datetime.now(timezone.utc))):
             self._discard(topic, report, problem.split(" (")[0], problem)  # vor Claude → kostet nichts
-            return
+            return False
         if len(text) < 300:
             self.db.transition(topic.id, Status.VERWORFEN, source_text=text, note="Quelltext zu kurz")
             report.discarded += 1
-            return
+            return False
         covered = self._covered(exclude=topic.id)
         args = dict(headline=topic.title, url=topic.url, source_name=topic.source_name, text=text,
                     source_date=(date_str or "unbekannt")[:10], covered=covered_listing(covered))
@@ -224,10 +237,10 @@ class Pipeline:
                 dup = merk.discard_reason.lower().startswith("dublette")
                 self._discard(topic, report, "Dublette" if dup else "Skript-Prüfung: kein passendes Thema",
                               f"Claude: {merk.discard_reason}")
-                return
+                return True
             if merk.list_possible:
                 self._save_v3(topic, merk, text, covered, report)
-                return
+                return True
             fallback_note = f"v3 nicht möglich: {merk.list_impossible_reason or 'zu wenige listenfähige Fakten'}"
             log.info("#%s %s – läuft als v2", topic.id, fallback_note)
         try:
@@ -239,7 +252,7 @@ class Pipeline:
             dup = script.discard_reason.lower().startswith("dublette")
             self._discard(topic, report, "Dublette" if dup else "Skript-Prüfung: kein passendes Thema",
                           f"Claude: {script.discard_reason}")
-            return
+            return True
         warnings = []
         data = script.model_dump()
         if similar := similar_scripts(data, covered):
@@ -256,6 +269,7 @@ class Pipeline:
         self.db.transition(topic.id, Status.SKRIPT, source_text=text,
                            script_json=json.dumps(data, ensure_ascii=False, indent=2), note=note, style=SCRIPT_STYLE)
         report.scripted += 1
+        return True
 
     def _book_writer_cost(self, topic: Topic, report: RunReport) -> None:
         for usd in getattr(self.writer, "spent", []):

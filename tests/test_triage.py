@@ -191,3 +191,22 @@ def test_hook_tafel_ab_frame_0() -> None:
     assert captions and all("NUMMER" not in c for c in captions)  # Hook nicht doppelt als Untertitel
     title = next(line for line in ass.splitlines() if ",Title," in line)
     assert title.split(",")[1] != "0:00:00.00"
+
+
+def test_alte_themen_verbrauchen_kein_claude_budget(tmp_path, monkeypatch) -> None:
+    from datetime import timedelta
+    ch = replace(load_channels()["de"], max_videos_per_run=1, max_new_topics_per_run=2)
+    db = Database(tmp_path / "p.sqlite3")
+    old = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
+    today = datetime.now(timezone.utc).isoformat()
+    for i in range(4):  # vier alte Themen ohne Datum in der DB, Datum kommt erst von der Artikelseite
+        tid = db.add_topic("de", f"https://bund.de/alt{i}", "Q", f"Alt {i}")
+        db.update_fields(tid, source_text="x" * 500, triage="ok: x", triage_score="5")
+    fresh = db.add_topic("de", "https://bund.de/neu", "Q", "Neu", published_at=today)
+    db.update_fields(fresh, source_text="x" * 500, triage="ok: x", triage_score="1")
+    import shorts.pipeline as pl
+    from shorts.sources import Article
+    monkeypatch.setattr(pl, "fetch_article", lambda url: Article("x" * 500, old[:10]))  # altes Datum von der Seite
+    writer = FakeWriter()
+    Pipeline(_settings(tmp_path), ch, db, writer=writer, tts=EspeakTTS(), triage=FakeTriage({})).step_script(RunReport())
+    assert writer.calls == ["Neu"]  # trotz Budget 2 kommt das frische Thema nach 4 kostenlosen Verwerfungen dran
