@@ -27,7 +27,8 @@
 </div>
 
 <h2>Ausreißer ({{ rows|length }})</h2>
-{% macro sortlink(key, label) %}<a href="/research?sort={{ key }}">{{ label }}{% if sort == key %} ▾{% endif %}</a>{% endmacro %}
+{% if hidden %}<p class="muted">{% if alle %}Alle angezeigt, inkl. {{ hidden }} als Politik/Satire/Unterhaltung eingeordnete · <a href="/research?sort={{ sort }}">nur passende</a>{% else %}{{ hidden }} als Politik/Satire/Unterhaltung ausgeblendet · <a href="/research?sort={{ sort }}&alle=1">alle anzeigen</a>{% endif %}</p>{% endif %}
+{% macro sortlink(key, label) %}<a href="/research?sort={{ key }}{% if alle %}&alle=1{% endif %}">{{ label }}{% if sort == key %} ▾{% endif %}</a>{% endmacro %}
 <div class="card table-wrap"><table>
   <thead><tr><th>{{ sortlink("score", "Score") }}</th><th>Titel</th><th>{{ sortlink("channel_title", "Kanal") }}</th>
     <th>{{ sortlink("subs", "Abos") }}</th><th>{{ sortlink("views", "Aufrufe") }}</th><th>{{ sortlink("views_per_day", "pro Tag") }}</th>
@@ -36,6 +37,7 @@
   {% for r in rows %}<tr id="r{{ r.video_id }}">
     <td data-label="Score"><b>{{ "%.1f"|format(r.score or 0) | replace(".", ",") }}×</b></td>
     <td data-label="Titel"><a href="{{ short_url(r.video_id) }}" target="_blank" rel="noopener">{{ r.title }}</a>
+      {% if r.relevant == "nein" %}<br><span class="pill off">aussortiert: {{ r.relevant_reason }}</span>{% endif %}
       <br><span class="muted">Suchbegriff: {{ r.search_term }}{% if r.n_snapshots > 1 %} · seit Fund +{{ "{:,}".format(r.views - r.first_views).replace(",", ".") }} Aufrufe ({{ r.n_snapshots }} Abrufe){% endif %}</span></td>
     <td data-label="Kanal">{{ r.channel_title }}<br><span class="muted">Median {{ "{:,}".format((r.channel_median or 0)|int).replace(",", ".") }}</span></td>
     <td data-label="Abos">{% if r.subs_hidden %}<span class="pill">versteckt</span>{% else %}{{ "{:,}".format(r.subs or 0).replace(",", ".") }}{% endif %}</td>

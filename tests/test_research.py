@@ -168,6 +168,31 @@ def test_filter_score_und_suchlimit() -> None:
                           replace(CFG, min_channel_videos=5), now=NOW)
     assert [c.video_id for c in result.outliers] == ["v1"]  # Kanal hidden hat nur 4 Uploads
     assert result.skipped["kein belastbarer Kanal-Median"] == 1
+    result = run_research(YouTubeAPI("k", get=FakeYouTube()), ResearchStore(Database(":memory:")),
+                          replace(CFG, min_channel_median=3000), now=NOW)
+    assert [c.video_id for c in result.outliers] == ["v5"]  # Kanal small: Median 2002 < 3000
+    assert result.skipped["Kanal-Median zu klein"] == 1
+
+
+def test_themen_vorauswahl_und_mindest_median_im_bestand() -> None:
+    from shorts.research import classify_outliers
+
+    store = ResearchStore(Database(":memory:"))
+    run_research(YouTubeAPI("k", get=FakeYouTube()), store, CFG, now=NOW)
+
+    class FakeClassifier:
+        spent = [0.0001]
+
+        def classify(self, videos):
+            assert {v["video_id"] for v in videos} == {"v1", "v5"}
+            return {"v5": (False, "Satire")}  # v1 fehlt → im Zweifel behalten
+
+    assert classify_outliers(store, FakeClassifier()) == (1, 1)
+    rows = {r["video_id"]: r for r in store.outliers()}
+    assert rows["v1"]["relevant"] == "ja" and rows["v5"]["relevant"] == "nein"
+    assert rows["v5"]["relevant_reason"] == "Satire"
+    assert classify_outliers(store, FakeClassifier()) == (0, 0)  # schon eingeordnet → kein neuer Aufruf
+    assert store.drop_small_median(3000) == 1 and [r["video_id"] for r in store.outliers()] == ["v5"]
 
 
 def test_kontingent_abbruch_mit_klarer_meldung() -> None:
@@ -198,9 +223,11 @@ def test_bericht_und_sichtung() -> None:
     store = ResearchStore(Database(":memory:"))
     result = run_research(YouTubeAPI("k", get=FakeYouTube()), store, CFG, now=NOW)
     top = store.outliers()
-    md = render_report(result, top, pattern_stats(top), None, 0.0, 0.9, "2026-11-25")
+    md = render_report(result, top, pattern_stats(top), None, 0.0, 0.9, "2026-11-25",
+                       excluded=[{"title": "Kabarett-Clip", "relevant_reason": "Satire"}])
     assert "| 1 | [Achtung: Rente steigt um 50 €](https://www.youtube.com/shorts/v1)" in md
     assert "versteckt" in md and "(< 5 Videos)" in md
+    assert "1 Ausreißer als Politik, Satire oder Unterhaltung aussortiert" in md and "Kabarett-Clip" in md
     store.save_review("v1", {"face": "nein", "voice": "KI", "first_frame": "Text-Tafel", "hook_type": "Warnung",
                              "music": "unsinn", "notes": "  große Zahl  "})
     r = store.reviewed()[0]

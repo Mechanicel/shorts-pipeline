@@ -44,6 +44,7 @@ class ResearchConfig:
     min_outlier_score: float = 5.0
     channel_median_uploads: int = 20
     min_channel_videos: int = 3
+    min_channel_median: float = 300   # winzige Mediane (Clip-Kanäle) erzeugen absurde Scores
     channel_cache_days: int = 7
     top_n: int = 40
     model: str = "claude-sonnet-5-5"
@@ -71,6 +72,7 @@ def load_research_config(path: Path = RESEARCH_FILE) -> ResearchConfig:
         min_outlier_score=float(f.get("min_outlier_score", 5)),
         channel_median_uploads=int(raw.get("channel_median_uploads", 20)),
         min_channel_videos=int(raw.get("min_channel_videos", 3)),
+        min_channel_median=float(f.get("min_channel_median", raw.get("min_channel_median", 300))),
         channel_cache_days=int(raw.get("channel_cache_days", 7)),
         top_n=int(a.get("top_n", 40)),
         model=str(a.get("model", "claude-sonnet-5-5")),
@@ -266,6 +268,8 @@ def final_filter_reason(c: Candidate, cfg: ResearchConfig) -> str | None:
         return "Kanal zu groß"
     if c.channel_videos < cfg.min_channel_videos or c.score is None:
         return "kein belastbarer Kanal-Median"
+    if (c.channel_median or 0) < cfg.min_channel_median:
+        return "Kanal-Median zu klein"
     if c.score < cfg.min_outlier_score:
         return "kein Ausreißer"
     return None
@@ -318,6 +322,10 @@ class ResearchStore:
     def __init__(self, db: Database) -> None:
         self.conn = db._conn
         self.conn.executescript(SCHEMA)
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(research_videos)")}
+        for col in ("relevant", "relevant_reason"):  # Themen-Vorauswahl (Haiku), nachträglich ergänzt
+            if col not in cols:
+                self.conn.execute(f"ALTER TABLE research_videos ADD COLUMN {col} TEXT")
 
     def now(self) -> str:
         return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -340,7 +348,10 @@ class ResearchStore:
     def save_video(self, c: Candidate) -> None:
         now = self.now()
         self.conn.execute(
-            """INSERT INTO research_videos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """INSERT INTO research_videos(video_id, channel_id, channel_title, title, description, tags, duration_s,
+                 published_at, views, likes, comments, subs, subs_hidden, channel_median, score, views_per_day,
+                 views_per_sub, search_term, first_seen, fetched_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(video_id) DO UPDATE SET title=excluded.title, description=excluded.description,
                  tags=excluded.tags, views=excluded.views, likes=excluded.likes, comments=excluded.comments,
                  subs=excluded.subs, subs_hidden=excluded.subs_hidden, channel_median=excluded.channel_median,
@@ -374,6 +385,19 @@ class ResearchStore:
                 FROM research_videos v LEFT JOIN research_reviews r USING(video_id)
                 ORDER BY {order} {direction} LIMIT ?""", (limit,))
         return [dict(r) for r in rows]
+
+    def unclassified(self) -> list[dict]:
+        return [dict(r) for r in self.conn.execute(
+            "SELECT video_id, title, description, tags, channel_title FROM research_videos WHERE relevant IS NULL")]
+
+    def set_relevance(self, video_id: str, relevant: bool, reason: str) -> None:
+        self.conn.execute("UPDATE research_videos SET relevant=?, relevant_reason=? WHERE video_id=?",
+                          ("ja" if relevant else "nein", reason[:200], video_id))
+
+    def drop_small_median(self, min_median: float) -> int:
+        """Bestehende Ausreißer, die nach dem Mindest-Median nicht mehr zählen, entfernen (Snapshots bleiben)."""
+        return self.conn.execute("DELETE FROM research_videos WHERE COALESCE(channel_median, 0) < ?",
+                                 (min_median,)).rowcount
 
     def save_review(self, video_id: str, values: dict[str, str]) -> None:
         clean = {k: (values.get(k) if values.get(k) in allowed else None) for k, allowed in REVIEW_FIELDS.items()}
@@ -415,6 +439,7 @@ class ResearchResult:
     candidates: int  # nach Vorfilter (Short, Aufrufe, Alter, Marke)
     quota_stop: str | None = None
     skipped: dict[str, int] = field(default_factory=dict)
+    note: str = ""  # z. B. „Neuauswertung ohne neue Suche“
 
 
 def _channel_stats(api: YouTubeAPI, store: ResearchStore, channel_ids: list[str], cfg: ResearchConfig
@@ -530,6 +555,75 @@ def pattern_stats(videos: list[dict]) -> dict:
     }
 
 
+# ------------------------------------------------------------------ Themen-Vorauswahl (Haiku)
+class TopicVerdict(BaseModel):
+    video_id: str
+    relevant: bool = Field(description="true = sachliche Info zu Geld, Recht, Sozialleistungen, Steuern, Rente, "
+                                       "Verbraucherthemen, die Zuschauern konkret etwas sagt.")
+    reason: str = Field(description="Begründung auf Deutsch, max. 10 Wörter.")
+
+
+class TopicBatch(BaseModel):
+    items: list[TopicVerdict]
+
+
+TOPIC_SYSTEM = """You sort YouTube Shorts for a German channel that explains concrete changes for ordinary people (money, law, \
+benefits, taxes, pension, health insurance, consumer rights) in a factual way.
+relevant=true: the Short informs about such a topic in a factual or practical way (rules, amounts, deadlines, \
+tips, comparisons with numbers), even if the title is catchy.
+relevant=false: political opinion clips or speeches by politicians, cabaret/satire/comedy, memes, rage bait \
+without concrete information, unrelated entertainment, advertising for a single product or service.
+Judge only from title, description and tags. When unsure, choose relevant=true.
+Return exactly one entry per video_id. Reason in German, max. 10 words."""
+
+
+class TopicClassifier:
+    """Ein günstiger Haiku-Aufruf je 60 Videos; Ergebnis wird in research_videos gespeichert."""
+
+    def __init__(self, settings: Settings) -> None:
+        import anthropic
+
+        if not settings.anthropic_api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY fehlt in .env")
+        self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key, max_retries=3)
+        self._model = settings.anthropic_triage_model
+        self.spent: list[float | None] = []
+
+    def classify(self, videos: list[dict]) -> dict[str, tuple[bool, str]]:
+        out: dict[str, tuple[bool, str]] = {}
+        for i in range(0, len(videos), 60):
+            batch = videos[i:i + 60]
+            listing = "\n\n".join(
+                f"[{v['video_id']}] {v['title']}\nKanal: {v['channel_title']}\n"
+                f"Tags: {', '.join(json.loads(v.get('tags') or '[]')[:10])}\n{(v.get('description') or '')[:300]}"
+                for v in batch)
+            response = self._client.messages.parse(
+                model=self._model, max_tokens=8000, system=TOPIC_SYSTEM,
+                messages=[{"role": "user", "content": listing}], output_format=TopicBatch,
+                output_config={"effort": "low"}, thinking={"type": "disabled"})
+            self.spent.append(claude_cost(response.model, response.usage.input_tokens, response.usage.output_tokens))
+            if response.stop_reason != "end_turn" or response.parsed_output is None:
+                raise RuntimeError(f"Themen-Vorauswahl ohne gültige Antwort (stop_reason={response.stop_reason})")
+            got = {it.video_id: (it.relevant, it.reason) for it in response.parsed_output.items}
+            for v in batch:  # fehlende IDs: im Zweifel behalten
+                out[v["video_id"]] = got.get(v["video_id"], (True, "keine Einschätzung – behalten"))
+        return out
+
+
+def classify_outliers(store: "ResearchStore", classifier) -> tuple[int, int]:
+    """Noch nicht eingeordnete Ausreißer einordnen. Liefert (behalten, aussortiert)."""
+    todo = store.unclassified()
+    if not todo:
+        return 0, 0
+    verdicts = classifier.classify(todo)
+    kept = dropped = 0
+    for v in todo:  # fehlende Einschätzung: im Zweifel behalten
+        ok, reason = verdicts.get(v["video_id"], (True, "keine Einschätzung – behalten"))
+        store.set_relevance(v["video_id"], ok, reason)
+        kept, dropped = (kept + 1, dropped) if ok else (kept, dropped + 1)
+    return kept, dropped
+
+
 # ------------------------------------------------------------------ Claude-Auswertung
 class Cluster(BaseModel):
     topic: str = Field(description="Thema in wenigen Wörtern, Deutsch.")
@@ -643,16 +737,26 @@ def write_csv(videos: list[dict], path: Path) -> Path:
 
 
 def render_report(result: ResearchResult, videos: list[dict], stats: dict, analysis: OutlierAnalysis | None,
-                  cost_usd: float, eur_per_usd: float, today: str) -> str:
-    lines = [f"# Ausreißer-Recherche {today}", "",
-             f"Suchbegriffe: {result.terms_searched} · search-Aufrufe: {result.search_calls} · weitere Einheiten: "
-             f"{result.units} · Kandidaten nach Vorfilter: {result.candidates} · **Ausreißer: {len(result.outliers)}**"
-             + (f" · ⚠️ Abbruch: {result.quota_stop}" if result.quota_stop else ""), "",
+                  cost_usd: float, eur_per_usd: float, today: str, excluded: list[dict] | None = None,
+                  min_median: float = 300) -> str:
+    excluded = excluded or []
+    counts = (f"Gespeicherte Ausreißer: {len(videos) + len(excluded)}" if result.note else
+              f"Suchbegriffe: {result.terms_searched} · search-Aufrufe: {result.search_calls} · weitere Einheiten: "
+              f"{result.units} · Kandidaten nach Vorfilter: {result.candidates} · **Ausreißer: {len(result.outliers)}**"
+              + (f" · ⚠️ Abbruch: {result.quota_stop}" if result.quota_stop else ""))
+    lines = [f"# Ausreißer-Recherche {today}", ""] + ([f"_{result.note}_", ""] if result.note else []) + [
+             counts, "",
              "Filter: Short ≤ 180 s, ≥ 20.000 Aufrufe, ≤ 30 Tage alt, Kanal ≤ 30.000 Abos (versteckt = markiert), "
-             "Score = Aufrufe / Median der letzten 20 Uploads ≥ 5. Nur offizielle YouTube Data API.", ""]
+             f"Score = Aufrufe / Median der letzten 20 Uploads ≥ 5, Kanal-Median ≥ {min_median:.0f}. "
+             "Nur offizielle YouTube Data API.", ""]
     if result.skipped:
         lines += ["Aussortiert: " + ", ".join(f"{k} {v}" for k, v in sorted(result.skipped.items(),
                                                                           key=lambda x: -x[1])), ""]
+    if excluded:
+        lines += [f"Themen-Vorauswahl (Claude Haiku): **{len(excluded)} Ausreißer als Politik, Satire oder Unterhaltung "
+                  f"aussortiert**, ausgewertet werden {len(videos)}.", "", "<details><summary>Aussortierte Titel</summary>",
+                  ""] + [f"- {v['title'].replace('|', '/')} – _{v.get('relevant_reason') or ''}_" for v in excluded[:30]] \
+            + ["", "</details>", ""]
     lines += ["## Top 20", "", "| # | Titel | Kanal | Abos | Aufrufe | Median Kanal | Score | Aufrufe/Tag | Länge |",
               "|---|---|---|---|---|---|---|---|---|"]
     for i, v in enumerate(videos[:20], 1):
@@ -688,9 +792,12 @@ def render_report(result: ResearchResult, videos: list[dict], stats: dict, analy
     return "\n".join(lines)
 
 
-def telegram_summary(result: ResearchResult, videos: list[dict], report_path: Path | None) -> str:
-    lines = [f"🔎 Recherche: {len(result.outliers)} Ausreißer aus {result.candidates} Kandidaten "
-             f"({result.search_calls} search-Aufrufe, {result.units} weitere Einheiten)"]
+def telegram_summary(result: ResearchResult, videos: list[dict], report_path: Path | None, excluded: int = 0) -> str:
+    head = (f"🔎 Recherche: {len(videos)} passende Ausreißer"
+            + (f", {excluded} Politik/Satire aussortiert" if excluded else "")
+            + (f" · {result.note}" if result.note else
+               f" (aus {result.candidates} Kandidaten, {result.search_calls} search-Aufrufe, {result.units} weitere Einheiten)"))
+    lines = [head]
     if result.quota_stop:
         lines.append(f"⚠️ Abgebrochen: YouTube meldet {result.quota_stop}")
     for v in videos[:5]:

@@ -31,6 +31,7 @@ filters:
   min_views: 20000
   max_age_days: 30
   min_outlier_score: 5        # Aufrufe / Median der letzten Uploads des Kanals
+  min_channel_median: 300     # winzige Mediane (Clip-/Repost-Kanäle) ergeben absurde Scores (> 1.000×)
 
 channel_median_uploads: 20    # so viele letzte Uploads bilden den Kanal-Median
 min_channel_videos: 3         # weniger Uploads → kein belastbarer Median, Video wird übersprungen

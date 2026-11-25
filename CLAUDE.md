@@ -136,6 +136,8 @@ melden einmal, manuell geht weiter). Rate-Limits/5xx: 3 Versuche mit Backoff. Ei
 
 **Ausreißer-Recherche (seit 25.11.):** `docker compose run --rm job research --terms 10`. Nur Data API v3 mit
 `YT_API_KEY`; max. 40 search-Aufrufe/Lauf; Kanal-Median 7 Tage gecacht; jeder Lauf schreibt Snapshots (Wachstum).
+Filter u. a. Kanal-Median ≥ 300 (sonst absurde Scores bei Repost-Kanälen); danach sortiert Haiku Politik/Satire/
+Unterhaltung aus (Spalte `relevant`, gecacht). `research --reanalyze` wertet ohne search-Kontingent neu aus.
 Titelmuster/Längen/Kanäle werden im Code exakt gezählt, Claude (Sonnet 5.5, effort medium) deutet nur und liefert
 Cluster + 10 Ideen. Manuelle Sichtung der ersten 3 s im Web; ab 15 Sichtungen „Muster auswerten“.
 

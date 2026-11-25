@@ -360,12 +360,16 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
 
     # ---------------------------------------------------------------- Ausreißer-Recherche
     @app.get("/research")
-    def research_page(request: Request, sort: str = "score", msg: str = "", err: str = ""):
+    def research_page(request: Request, sort: str = "score", alle: int = 0, msg: str = "", err: str = ""):
         from ..research import MIN_REVIEWS_FOR_ANALYSIS, REVIEW_FIELDS, ResearchStore, short_url
 
         d = db()
         store = ResearchStore(d)
-        return page(request, "research.html", rows=store.outliers(order=sort), sort=sort, fields=REVIEW_FIELDS,
+        rows = store.outliers(order=sort)
+        hidden = sum(1 for r in rows if r.get("relevant") == "nein")
+        if not alle:
+            rows = [r for r in rows if r.get("relevant") != "nein"]
+        return page(request, "research.html", rows=rows, sort=sort, alle=alle, hidden=hidden, fields=REVIEW_FIELDS,
                     reviewed=store.review_count(), min_reviews=MIN_REVIEWS_FOR_ANALYSIS, last_run=store.last_run(),
                     analysis=d.get_setting("research_review_analysis"), short_url=short_url,
                     has_key=bool(s.yt_api_key), msg=msg, err=err)

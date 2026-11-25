@@ -172,9 +172,9 @@ def cmd_check_public(args, settings) -> int:
 def cmd_research(args, settings) -> int:
     from datetime import date
 
-    from .research import (MIN_REVIEWS_FOR_ANALYSIS, OUR_FORMAT, ResearchAnalyst, ResearchStore, YouTubeAPI,
-                           load_research_config, pattern_stats, render_report, run_research, telegram_summary,
-                           write_csv)
+    from .research import (MIN_REVIEWS_FOR_ANALYSIS, OUR_FORMAT, ResearchAnalyst, ResearchResult, ResearchStore,
+                           TopicClassifier, YouTubeAPI, classify_outliers, load_research_config, pattern_stats,
+                           render_report, run_research, telegram_summary, write_csv)
     from .result import ERROR, OK, WARN, report
 
     cfg = load_research_config()
@@ -201,15 +201,37 @@ def cmd_research(args, settings) -> int:
                .replace(".", ",", 1))
         return 0
 
-    if not settings.yt_api_key:
-        report(ERROR, "YT_API_KEY fehlt in .env (API-Schlüssel für die YouTube Data API v3).")
-        return 1
-    terms = args.term or cfg.search_terms[: args.terms or None]
-    run_id = store.start_run(len(terms))
-    result = run_research(YouTubeAPI(settings.yt_api_key), store, cfg, terms)
-    top = [v for v in store.outliers() if v["video_id"] in {c.video_id for c in result.outliers}][: cfg.top_n]
+    if args.reanalyze:  # vorhandene Daten neu filtern und auswerten, ohne search-Kontingent
+        removed = store.drop_small_median(cfg.min_channel_median)
+        result = ResearchResult([], 0, 0, 0, 0, note=f"Neuauswertung der gespeicherten Ausreißer ohne neue Suche; "
+                                f"{removed} entfernt (Kanal-Median < {cfg.min_channel_median:.0f}).")
+        pool = store.outliers()
+        run_id = None
+    else:
+        if not settings.yt_api_key:
+            report(ERROR, "YT_API_KEY fehlt in .env (API-Schlüssel für die YouTube Data API v3).")
+            return 1
+        terms = args.term or cfg.search_terms[: args.terms or None]
+        run_id = store.start_run(len(terms))
+        result = run_research(YouTubeAPI(settings.yt_api_key), store, cfg, terms)
+        found = {c.video_id for c in result.outliers}
+        pool = [v for v in store.outliers() if v["video_id"] in found]
+
+    cost = 0.0
+    if settings.anthropic_api_key and pool:  # Themen-Vorauswahl: Politik/Satire/Unterhaltung aussortieren
+        classifier = TopicClassifier(settings)
+        try:
+            kept, dropped = classify_outliers(store, classifier)
+            log.info("Themen-Vorauswahl: %d behalten, %d aussortiert", kept, dropped)
+        except Exception as exc:
+            log.warning("Themen-Vorauswahl fehlgeschlagen (%s) – alle Ausreißer werden ausgewertet", type(exc).__name__)
+        cost += sum(x or 0 for x in classifier.spent)
+        relevance = {v["video_id"]: v for v in store.outliers()}
+        pool = [relevance.get(v["video_id"], v) for v in pool]
+    excluded = [v for v in pool if v.get("relevant") == "nein"]
+    top = [v for v in pool if v.get("relevant") != "nein"][: cfg.top_n]
     stats = pattern_stats(top)
-    analysis, cost = None, 0.0
+    analysis = None
     if top and not args.no_analysis and settings.anthropic_api_key:
         analyst = ResearchAnalyst(settings, cfg)
         try:
@@ -217,21 +239,23 @@ def cmd_research(args, settings) -> int:
             analysis = analyst.analyse(top, stats, ch.name, [src.name for src in ch.sources])
         except Exception as exc:  # Auswertung ist Zugabe – Daten und Bericht gibt es trotzdem
             log.warning("Claude-Auswertung fehlgeschlagen: %s", type(exc).__name__)
-        cost = sum(x or 0 for x in analyst.spent)
+        cost += sum(x or 0 for x in analyst.spent)
     path = out_dir / f"outliers-{today}.md"
     out_dir.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_report(result, top, stats, analysis, cost, settings.eur_per_usd, today), encoding="utf-8")
+    path.write_text(render_report(result, top, stats, analysis, cost, settings.eur_per_usd, today, excluded,
+                                  cfg.min_channel_median), encoding="utf-8")
     write_csv(top, path.with_suffix(".csv"))
-    store.finish_run(run_id, search_calls=result.search_calls, units=result.units, candidates=result.candidates,
-                     outliers=len(result.outliers), quota_stop=result.quota_stop, report_path=str(path))
-    notify(settings, telegram_summary(result, top, path))
+    if run_id:
+        store.finish_run(run_id, search_calls=result.search_calls, units=result.units, candidates=result.candidates,
+                         outliers=len(result.outliers), quota_stop=result.quota_stop, report_path=str(path))
+    notify(settings, telegram_summary(result, top, path, len(excluded)))
     print(path.read_text(encoding="utf-8"))
-    summary = (f"{len(result.outliers)} Ausreißer aus {result.candidates} Kandidaten, "
+    summary = (f"{len(top)} passende Ausreißer ({len(excluded)} Politik/Satire aussortiert), "
                f"{result.search_calls} search-Aufrufe")
     if result.quota_stop:
         report(WARN, f"{summary} – abgebrochen: YouTube meldet {result.quota_stop}")
     else:
-        report(OK if result.outliers else WARN, summary)
+        report(OK if top else WARN, summary)
     return 0
 
 
@@ -319,6 +343,8 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--term", action="append", default=[], help="eigener Suchbegriff (mehrfach möglich)")
     sp.add_argument("--no-analysis", action="store_true", help="ohne Claude-Auswertung")
     sp.add_argument("--analyze-reviews", action="store_true", help="manuell gesichtete Videos auswerten")
+    sp.add_argument("--reanalyze", action="store_true",
+                    help="gespeicherte Ausreißer neu filtern und auswerten (ohne search-Kontingent)")
     add("bot", cmd_bot, "Telegram-Review-Bot (dauerhaft)", channel=False)
     sp = add("web", cmd_web, "Webinterface + Zeitplan (dauerhaft)", channel=False)
     sp.add_argument("--port", type=int, default=8080)
